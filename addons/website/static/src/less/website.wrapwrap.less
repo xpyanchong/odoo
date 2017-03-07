@@ -1,3 +1,7 @@
+///
+/// This file regroups the general rules for website design. See the website.snippets.less rules for
+/// snippets-specific rules.
+///
 
 #wrapwrap {
     position: relative;
@@ -5,7 +9,7 @@
     table-layout: fixed;
     width: 100%;
     height: 100%;
-    
+
     > * {
         display: table-row;
     }
@@ -20,7 +24,8 @@ header a.navbar-brand {
         padding: 0 15px;
     }
     img {
-        max-height: 50px;
+        max-height: 35px;
+        margin-top: 8px;
     }
 }
 footer {
@@ -36,22 +41,19 @@ footer {
     display: none!important;
 }
 
-// Odoo options classes
-.para_large {
-    font-size: 120%;
-}
-.jumbotron {
-    margin-bottom: 0;
-    .para_large p {
-        font-size: 150%;
-    }
+.o_text_overflow {
+    .text-overflow()
 }
 
-.readable {
-    font-size: 120%;
-    max-width: 700px;
-    margin-left: auto;
-    margin-right: auto;
+.o_div_text_overflow * > div {
+    // .text-overflow() we don't want wordwrap
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+// Odoo options classes
+.jumbotron {
+    margin-bottom: 0;
 }
 
 // Odoo image background classes
@@ -75,63 +77,6 @@ footer {
     &.o_bg_img_opt_repeat_y {
         background-repeat: repeat-y;
     }
-}
-
-//  Background (kept for 8.0 compatibility)
-.oe_dark {
-    background-color: rgba(200, 200, 200, 0.14);
-}
-.oe_black {
-    background-color: rgba(0, 0, 0, 0.9);
-    color: white;
-}
-.oe_green {
-    background-color: #169C78;
-    color: white;
-    .text-muted {
-        color: #ddd;
-    }
-}
-.oe_blue_light {
-    background-color: #41b6ab;
-    color: white;
-    .text-muted {
-        color: #ddd;
-    }
-}
-.oe_blue {
-    background-color: #34495e;
-    color: white;
-}
-.oe_orange {
-    background-color: #f05442;
-    color: white;
-    .text-muted {
-        color: #ddd;
-    }
-}
-.oe_purple {
-    background-color: #b163a3;
-    color: white;
-    .text-muted {
-        color: #ddd;
-    }
-}
-.oe_red {
-    background-color: #9C1b31;
-    color: white;
-    .text-muted {
-        color: #ddd;
-    }
-}
-.oe_none {
-    background-color: #FFFFFF;
-}
-.oe_yellow {
-    background-color: #A2A51B;
-}
-.oe_green {
-    background-color: #149F2C;
 }
 
 // Typography
@@ -219,13 +164,10 @@ hr {
 .container {
     max-width: 100%;
 }
-// container inside container
-.container, .readable {
-    .container {
-        padding-left: 0;
-        padding-right: 0;
-        width: auto;
-    }
+.container .container {
+    padding-left: 0;
+    padding-right: 0;
+    width: auto;
 }
 
 // HEADER NAV BAR
@@ -244,21 +186,6 @@ ul.nav-stacked > li > a {
 // Columns min height
 [class^="col-md-"] {
     min-height: 24px;
-}
-
-// PUBLISH
-.css_published {
-    .btn-danger, .css_publish {
-        display: none;
-    }
-}
-.css_unpublished {
-    .btn-success, .css_unpublish {
-        display: none;
-    }
-}
-[data-publish='off'] > *:not(.css_options) {
-    opacity: 0.5;
 }
 
 // Others
@@ -291,11 +218,81 @@ ul.nav-stacked > li > a {
 .oe_search_box {
     padding-right: 23px;
 }
-.oe_search_clear {
-    .o-position-absolute(1px, 42px);
-    z-index: 2;
-    display: none;
-    cursor: pointer;
-    color: #939393;
-    padding: 10px 0;
+
+// Kept for (up to) saas-12 compatibility
+.para_large {
+    font-size: 120%;
+}
+.jumbotron .para_large p {
+    font-size: 150%;
+}
+
+.readable {
+    font-size: 120%;
+    max-width: 700px;
+    margin-left: auto;
+    margin-right: auto;
+
+    .container {
+        padding-left: 0;
+        padding-right: 0;
+        width: auto;
+    }
+}
+
+//  Background (kept for 8.0 compatibility) (! some are still used by website_blog)
+.oe_dark {
+    background-color: rgba(200, 200, 200, 0.14);
+}
+.oe_black {
+    background-color: rgba(0, 0, 0, 0.9);
+    color: white;
+}
+.oe_green {
+    background-color: #169C78;
+    color: white;
+    .text-muted {
+        color: #ddd;
+    }
+}
+.oe_blue_light {
+    background-color: #41b6ab;
+    color: white;
+    .text-muted {
+        color: #ddd;
+    }
+}
+.oe_blue {
+    background-color: #34495e;
+    color: white;
+}
+.oe_orange {
+    background-color: #f05442;
+    color: white;
+    .text-muted {
+        color: #ddd;
+    }
+}
+.oe_purple {
+    background-color: #b163a3;
+    color: white;
+    .text-muted {
+        color: #ddd;
+    }
+}
+.oe_red {
+    background-color: #9C1b31;
+    color: white;
+    .text-muted {
+        color: #ddd;
+    }
+}
+.oe_none {
+    background-color: #FFFFFF;
+}
+.oe_yellow {
+    background-color: #A2A51B;
+}
+.oe_green {
+    background-color: #149F2C;
 }

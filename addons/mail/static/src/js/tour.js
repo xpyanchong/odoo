@@ -6,9 +6,7 @@ var tour = require('web_tour.tour');
 
 var _t = core._t;
 
-tour.register('mail_tour', {
-    'skip_enabled': true,
-}, [{
+tour.register('mail_tour', [{
     trigger: '.o_mail_chat .o_mail_chat_sidebar .o_add[data-type="public"]',
     content: _t("<p>Channels make it easy to organize information across different topics and groups.</p> <p>Try to <b>create your first channel</b> (e.g. sales, marketing, product XYZ, after work party, etc).</p>"),
     position: 'bottom',
@@ -27,7 +25,7 @@ tour.register('mail_tour', {
     position: "bottom",
 }, {
     trigger: '.o_mail_chat .o_mail_chat_sidebar .o_add[data-type="dm"]',
-    content: _t("<p><b>Chat with collegues</b> in real-time using direct messages.</p><p><i>You might need to invite users from the Settings app first.</i></p>"),
+    content: _t("<p><b>Chat with coworkers</b> in real-time using direct messages.</p><p><i>You might need to invite users from the Settings app first.</i></p>"),
     position: 'bottom',
 }]);
 

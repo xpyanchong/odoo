@@ -14,14 +14,14 @@ var web_client = require('web.web_client');
 
 var _t = core._t;
 var _lt = core._lt;
-var LIMIT = 100;
+var LIMIT = 25;
 var preview_msg_max_size = 350;  // optimal for native english speakers
 var ODOOBOT_ID = "ODOOBOT";
 
-var MessageModel = new Model('mail.message', session.context);
-var ChannelModel = new Model('mail.channel', session.context);
-var UserModel = new Model('res.users', session.context);
-var PartnerModel = new Model('res.partner', session.context);
+var MessageModel = new Model('mail.message', session.user_context);
+var ChannelModel = new Model('mail.channel', session.user_context);
+var UserModel = new Model('res.users', session.user_context);
+var PartnerModel = new Model('res.partner', session.user_context);
 
 // Private model
 //----------------------------------------------------------------------------------
@@ -128,10 +128,13 @@ function make_message (data) {
         subtype_description: data.subtype_description,
         is_author: data.author_id && data.author_id[0] === session.partner_id,
         is_note: data.is_note,
-        is_system_notification: data.message_type === 'notification' && data.model === 'mail.channel',
+        is_system_notification: (data.message_type === 'notification' && data.model === 'mail.channel')
+            || data.info === 'transient_message',
         attachment_ids: data.attachment_ids || [],
         subject: data.subject,
         email_from: data.email_from,
+        customer_email_status: data.customer_email_status,
+        customer_email_data: data.customer_email_data,
         record_name: data.record_name,
         tracking_value_ids: data.tracking_value_ids,
         channel_ids: data.channel_ids,
@@ -214,6 +217,22 @@ function make_message (data) {
         a.url = '/web/content/' + a.id + '?download=true';
     });
 
+    // format date to the local only once by message
+    // can not be done in preprocess, since it alter the original value
+    if (msg.tracking_value_ids && msg.tracking_value_ids.length) {
+        _.each(msg.tracking_value_ids, function(f) {
+            if (_.contains(['date', 'datetime'], f.field_type)) {
+                var format = (f.field_type === 'date') ? 'LL' : 'LLL';
+                if (f.old_value) {
+                    f.old_value = moment.utc(f.old_value).local().format(format);
+                }
+                if (f.new_value) {
+                    f.new_value = moment.utc(f.new_value).local().format(format);
+                }
+            }
+        });
+    }
+
     return msg;
 }
 
@@ -260,6 +279,7 @@ function make_channel (data, options) {
         hidden: options.hidden,
         display_needactions: options.display_needactions,
         mass_mailing: data.mass_mailing,
+        group_based_subscription: data.group_based_subscription,
         needaction_counter: data.message_needaction_counter || 0,
         unread_counter: 0,
         last_seen_message_id: data.seen_message_id,
@@ -364,7 +384,7 @@ function fetch_from_channel (channel, options) {
         domain = new data.CompoundDomain([['id', '<', min_message_id]], domain);
     }
 
-    return MessageModel.call('message_fetch', [domain], {limit: LIMIT}).then(function (msgs) {
+    return MessageModel.call('message_fetch', [domain], {limit: LIMIT, context: session.user_context}).then(function (msgs) {
         if (!cache.all_history_loaded) {
             cache.all_history_loaded =  msgs.length < LIMIT;
         }
@@ -389,13 +409,13 @@ function fetch_document_messages (ids, options) {
     if (options.force_fetch || _.difference(ids.slice(0, LIMIT), loaded_msg_ids).length) {
         var ids_to_load = _.difference(ids, loaded_msg_ids).slice(0, LIMIT);
 
-        return MessageModel.call('message_format', [ids_to_load]).then(function (msgs) {
+        return MessageModel.call('message_format', [ids_to_load], {context: session.user_context}).then(function (msgs) {
             var processed_msgs = [];
             _.each(msgs, function (msg) {
                 processed_msgs.push(add_message(msg, {silent: true}));
             });
             return _.sortBy(loaded_msgs.concat(processed_msgs), function (msg) {
-                return msg.date;
+                return msg.id;
             });
         });
     } else {
@@ -460,7 +480,9 @@ function on_needaction_notification (message) {
         increment_unread: true,
     });
     invalidate_caches(message.channel_ids);
-    needaction_counter++;
+    if (message.channel_ids.length !== 0) {
+        needaction_counter++;
+    }
     _.each(message.channel_ids, function (channel_id) {
         var channel = chat_manager.get_channel(channel_id);
         if (channel) {
@@ -642,9 +664,17 @@ var chat_manager = {
 
     post_message: function (data, options) {
         options = options || {};
+
+        // This message will be received from the mail composer as html content subtype
+        // but the urls will not be linkified. If the mail composer takes the responsibility
+        // to linkify the urls we end up with double linkification a bit everywhere.
+        // Ideally we want to keep the content as text internally and only make html
+        // enrichment at display time but the current design makes this quite hard to do.
+        var body = utils.parse_and_transform(_.str.trim(data.content), utils.add_link);
+
         var msg = {
             partner_ids: data.partner_ids,
-            body: _.str.trim(data.content),
+            body: body,
             attachment_ids: data.attachment_ids,
         };
         if ('subject' in data) {
@@ -918,14 +948,14 @@ var chat_manager = {
         if (res_model === "res.partner") {
             var domain = [["partner_id", "=", res_id]];
             UserModel.call("search", [domain]).then(function (user_ids) {
-                if (user_ids.length && user_ids[0] !== session.uid) {
-                    self.create_channel(res_id, 'dm').then(dm_redirection_callback || function () {});
-                } else if (!user_ids.length) {
+                if (user_ids.length && user_ids[0] !== session.uid && dm_redirection_callback) {
+                    self.create_channel(res_id, 'dm').then(dm_redirection_callback);
+                } else {
                     redirect_to_document(res_model, res_id);
                 }
             });
         } else {
-            new Model(res_model).call('get_formview_id', [res_id, session.context]).then(function (view_id) {
+            new Model(res_model).call('get_formview_id', [[res_id], session.user_context]).then(function (view_id) {
                 redirect_to_document(res_model, res_id, view_id);
             });
         }
@@ -1017,7 +1047,9 @@ function init () {
 
     bus.on('notification', null, on_notification);
 
-    return session.rpc('/mail/client_action').then(function (result) {
+    return session.is_bound.then(function(){
+        return session.rpc('/mail/client_action');
+    }).then(function (result) {
         _.each(result.channel_slots, function (channels) {
             _.each(channels, add_channel);
         });

@@ -31,7 +31,7 @@ otherwise.
 ``arch``
     the description of the view's layout
 ``groups_id``
-    :class:`~openerp.fields.Many2many` field to the groups allowed to view/use
+    :class:`~odoo.fields.Many2many` field to the groups allowed to view/use
     the current view
 ``inherit_id``
     the current view's parent view, see :ref:`reference/views/inheritance`,
@@ -201,10 +201,6 @@ Possible children elements of the list view are:
     ``type``
         type of button, indicates how it clicking it affects Odoo:
 
-        ``workflow`` (default)
-            sends a signal to a workflow. The button's ``name`` is the
-            workflow signal, the row's record is passed as argument to the
-            signal
         ``object``
             call a method on the list's model. The button's ``name`` is the
             method, which is called with the current row's record id and the
@@ -363,8 +359,8 @@ system. Available semantic components are:
     the name of the field to render
   ``widget``
     fields have a default rendering based on their type
-    (e.g. :class:`~openerp.fields.Char`,
-    :class:`~openerp.fields.Many2one`). The ``widget`` attributes allows using
+    (e.g. :class:`~odoo.fields.Char`,
+    :class:`~odoo.fields.Many2one`). The ``widget`` attributes allows using
     a different rendering method and context.
 
     .. todo:: list of widgets
@@ -385,7 +381,7 @@ system. Available semantic components are:
       only displays the field in the corresponding form mode
     ``oe_no_button``
       avoids displaying the navigation button in a
-      :class:`~openerp.fields.Many2one`
+      :class:`~odoo.fields.Many2one`
     ``oe_avatar``
       for image fields, displays images as "avatar" (square, 90x90 maximum
       size, some image decorations)
@@ -397,7 +393,7 @@ system. Available semantic components are:
 
     .. deprecated:: 8.0
 
-       Use :func:`openerp.api.onchange` on the model
+       Use :func:`odoo.api.onchange` on the model
 
   ``attrs``
     dynamic meta-parameters based on record values
@@ -420,7 +416,7 @@ system. Available semantic components are:
     complex forms. *Should not* be an example of data as users are liable to
     confuse placeholder text with filled fields
   ``mode``
-    for :class:`~openerp.fields.One2many`, display mode (view type) to use for
+    for :class:`~odoo.fields.One2many`, display mode (view type) to use for
     the field's linked records. One of ``tree``, ``form``, ``kanban`` or
     ``graph``. The default is ``tree`` (a list display)
   ``help``
@@ -429,7 +425,7 @@ system. Available semantic components are:
     for binary fields, name of the related field providing the name of the
     file
   ``password``
-    indicates that a :class:`~openerp.fields.Char` field stores a password and
+    indicates that a :class:`~odoo.fields.Char` field stores a password and
     that its data shouldn't be displayed
 
 .. todo:: classes for forms
@@ -508,12 +504,6 @@ should only be visible when current.
 The states are shown following the order used in the field (the list in a
 selection field, etc). States that are always visible are specified with the
 attribute ``statusbar_visible``.
-
-``statusbar_colors``
-    can be used to give a custom color to specific states.
-
-    .. deprecated:: 9.0
-
 
 ::
 
@@ -698,7 +688,7 @@ The form above contains a <sheet> element that starts with:
 Tags
 ....
 
-Most :class:`~openerp.fields.Many2many` fields, like categories, are better
+Most :class:`~odoo.fields.Many2many` fields, like categories, are better
 rendered as a list of tags. Use the widget ``many2many_tags`` for this:
 
 .. image:: forms/screenshot-04.png
@@ -870,7 +860,7 @@ Possible children of the view element are:
     an object with all the requested fields as its attributes. Each field has
     two attributes ``value`` and ``raw_value``, the former is formatted
     according to current user parameters, the latter is the direct value from
-    a :meth:`~openerp.models.Model.read` (except for date and datetime fields
+    a :meth:`~odoo.models.Model.read` (except for date and datetime fields
     that are `formatted according to user's locale
     <https://github.com/odoo/odoo/blob/a678bd4e/addons/web_kanban/static/src/js/kanban_record.js#L102>`_)
   ``formats``
@@ -1047,7 +1037,7 @@ take the following attributes:
   .. warning::
       The dictionnary definition must use double-quotes, ``{'user_id': 100}`` is
       not a valid value
-``consolidation_label``
+``string``
   string to display next to the consolidation value, if not specified, the label
   of the consolidation field will be used
 ``fold_last_level``
@@ -1092,10 +1082,10 @@ Possible children of the diagram view are:
     ``object`` (required)
       the edge's Odoo model
     ``source`` (required)
-      :class:`~openerp.fields.Many2one` field of the edge's model pointing to
+      :class:`~odoo.fields.Many2one` field of the edge's model pointing to
       the edge's source node record
     ``destination`` (required)
-      :class:`~openerp.fields.Many2one` field of the edge's model pointing to
+      :class:`~odoo.fields.Many2one` field of the edge's model pointing to
       the edge's destination node record
     ``label``
       Python list of attributes (as quoted strings). The corresponding
@@ -1167,10 +1157,10 @@ Possible children elements of the search view are:
     ``widget``
         use specific search widget for the field (the only use case in
         standard Odoo 8.0 is a ``selection`` widget for
-        :class:`~openerp.fields.Many2one` fields)
+        :class:`~odoo.fields.Many2one` fields)
     ``domain``
         if the field can provide an auto-completion
-        (e.g. :class:`~openerp.fields.Many2one`), filters the possible
+        (e.g. :class:`~odoo.fields.Many2one`), filters the possible
         completion results.
 
 ``filter``

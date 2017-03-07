@@ -222,13 +222,22 @@ var DataExport = Dialog.extend({
 
         var got_fields = new $.Deferred();
         this.$import_compat_radios.change(function(e) {
-            self.$fields_list.empty();
             self.$('.o_field_tree_structure').remove();
 
             self.rpc("/web/export/get_fields", {
                 model: self.dataset.model,
                 import_compat: !!$(e.target).val(),
             }).done(function (records) {
+                var compatible_fields = _.map(records, function (record) {return record.id});
+                self.$fields_list
+                    .find('option')
+                    .filter(function () {
+                        var option_field = $(this).attr('value');
+                        if (compatible_fields.indexOf(option_field) === -1) {
+                            return true;
+                        }
+                    })
+                    .remove();
                 got_fields.resolve();
                 self.on_show_data(records);
             });
@@ -295,16 +304,21 @@ var DataExport = Dialog.extend({
             });
             self.$('.o_delete_exported_list').click(function() {
                 var select_exp = self.$('.o_exported_lists_select option:selected');
-                if(select_exp.val()) {
-                    self.exports.unlink([parseInt(select_exp.val(), 10)]);
-                    select_exp.remove();
-                    self.$fields_list.empty();
-                    if (self.$('.o_exported_lists_select option').length <= 1) {
-                        self.$('.o_exported_lists').hide();
+                var options = {
+                    confirm_callback: function () {
+                        if (select_exp.val()) {
+                            self.exports.unlink([parseInt(select_exp.val(), 10)]);
+                            select_exp.remove();
+                            self.$fields_list.empty();
+                            if (self.$('.o_exported_lists_select option').length <= 1) {
+                                self.$('.o_exported_lists').hide();
+                            }
+                        }
                     }
-                }
+                };
+                Dialog.confirm(this, _t("Do you really want to delete this export template?"), options);
             });
-        });
+       });
 
         function do_load_export_field(field_list) {
             _.each(field_list, function (field) {
@@ -355,11 +369,11 @@ var DataExport = Dialog.extend({
                 .find('.o_expand_parent')
                 .toggleClass('fa-plus fa-minus')
                 .next()
-                .after(QWeb.render('Export.TreeItems', {'fields': records}));
+                .after(QWeb.render('Export.TreeItems', {'fields': records, 'debug': this.session.debug}));
         } else {
             this.$('.o_left_field_panel').empty().append(
                 $("<div/>").addClass('o_field_tree_structure')
-                           .append(QWeb.render('Export.TreeItems', {'fields': records}))
+                           .append(QWeb.render('Export.TreeItems', {'fields': records, 'debug': this.session.debug}))
             );
         }
 
@@ -394,6 +408,7 @@ var DataExport = Dialog.extend({
     },
     add_field: function(field_id, string) {
         var $field_list = this.$('.o_fields_list');
+        field_id = this.records[field_id].value || field_id;
         if($field_list.find("option[value='" + field_id + "']").length === 0) {
             $field_list.append(new Option(string, field_id));
         }

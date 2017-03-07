@@ -1,11 +1,24 @@
-// General rules
+///
+/// This file regroups the snippets-specific design rules.
+///
+
 .carousel, .parallax, .blockquote {
     overflow: hidden;
 }
-
 @media (max-width: 400px) {
     section, .parallax, .row, .hr, .blockquote {
         height: auto !important;
+    }
+}
+
+// "Cover" snippet
+@s_text_block_image_fw-padding: 0 30px;
+.s_text_block_image_fw {
+    .container {
+        padding: @s_text_block_image_fw-padding;
+        > .row > div {
+            padding: 30px;
+        }
     }
 }
 
@@ -16,7 +29,6 @@
     word-break: break-all;
     border: 1px solid #dddddd;
 }
-
 .table_heading {
     background-color: #f5f5f5;
     border: 1px solid #dddddd;
@@ -24,7 +36,6 @@
     font-size: 14px;
     padding: 4px;
 }
-
 table.table_desc tr td {
     text-align: left;
     padding: 5px;
@@ -45,7 +56,6 @@ table.table_desc tr td {
 .s_comparisons .panel .list-group-item:not(.active) {
     color: #666;
 }
-
 .s_references .img-thumbnail {
     border: none;
 }
@@ -101,7 +111,6 @@ table.table_desc tr td {
     height: 100%;
     .item {
         height: 100%;
-        background-size: cover;
     }
     .carousel-control {
         cursor: pointer;
@@ -135,7 +144,6 @@ table.table_desc tr td {
 .quotecarousel {
     padding-bottom: 16px;
 }
-
 div.carousel .container {
     > .carousel-caption {
         .o-position-absolute(@right: 50%, @left: 50%);
@@ -362,35 +370,47 @@ div.carousel .container {
     }
 }
 
-// Parallax Theme
 div.carousel {
-    .carousel-indicators {
-        li { border: 1px solid grey; }
-        .active { background-color: grey; }
+    .carousel-indicators li {
+        box-shadow: 0 0 0 1px grey;
+        &:hover:not(.active) {
+            background-color: @color-white-50;
+        }
     }
     span.carousel-img img,
     div.carousel-content {
         max-height: 95%;
         padding: 10px;
     }
-    div.carousel-content {
-        background-color: black;
-        color: white;
-        background: rgba(0, 0, 0, 0.3);
+    .carousel-control {
+        cursor: pointer;
     }
 }
 
+// Parallax Theme
 .parallax {
-    background-size: cover;
-    > div {
-        position: relative;
-        display: table;
-        width: 100%;
-        min-height: 200px;
-        > div {
-            display: table-cell;
-            vertical-align: middle;
-            padding: 32px 0;
+    position: relative;
+
+    .oe_structure {
+        > :first-child {
+            margin-top: 32px;
+        }
+        > :last-child {
+            margin-bottom: 32px;
         }
     }
+
+    > .s_parallax_bg {
+        .o-position-absolute(0, 0, 0, 0);
+        background-size: cover;
+        background-attachment: scroll;
+        pointer-events: none;
+        z-index: -1;
+    }
+    &.s_parallax_is_fixed > .s_parallax_bg {
+        background-attachment: fixed;
+    }
+}
+.s_parallax {
+    min-height: 200px;
 }

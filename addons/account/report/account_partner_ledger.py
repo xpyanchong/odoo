@@ -2,8 +2,8 @@
 
 from datetime import datetime
 import time
-from openerp import api, models
-from openerp.tools import DEFAULT_SERVER_DATE_FORMAT
+from odoo import api, models
+from odoo.tools import DEFAULT_SERVER_DATE_FORMAT
 
 
 class ReportPartnerLedger(models.AbstractModel):
@@ -31,7 +31,7 @@ class ReportPartnerLedger(models.AbstractModel):
         lang_code = self.env.context.get('lang') or 'en_US'
         lang = self.env['res.lang']
         lang_id = lang._lang_get(lang_code)
-        date_format = lang.browse(lang_id).date_format
+        date_format = lang_id.date_format
         for r in res:
             r['date'] = datetime.strptime(r['date'], DEFAULT_SERVER_DATE_FORMAT).strftime(date_format)
             r['displayed_name'] = '-'.join(
@@ -65,8 +65,8 @@ class ReportPartnerLedger(models.AbstractModel):
             result = contemp[0] or 0.0
         return result
 
-    @api.multi
-    def render_html(self, data):
+    @api.model
+    def render_html(self, docids, data=None):
         data['computed'] = {}
 
         obj_partner = self.env['res.partner']

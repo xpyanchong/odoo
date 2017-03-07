@@ -29,7 +29,7 @@ class MailMail(models.Model):
         return mail
 
     def _get_tracking_url(self, partner=None):
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         track_url = urlparse.urljoin(
             base_url, 'mail/track/%(mail_id)s/blank.gif?%(params)s' % {
                 'mail_id': self.id,
@@ -39,11 +39,17 @@ class MailMail(models.Model):
         return '<img src="%s" alt=""/>' % track_url
 
     def _get_unsubscribe_url(self, email_to):
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         url = urlparse.urljoin(
             base_url, 'mail/mailing/%(mailing_id)s/unsubscribe?%(params)s' % {
                 'mailing_id': self.mailing_id.id,
-                'params': werkzeug.url_encode({'db': self.env.cr.dbname, 'res_id': self.res_id, 'email': email_to})
+                'params': werkzeug.url_encode({
+                    'db': self.env.cr.dbname,
+                    'res_id': self.res_id,
+                    'email': email_to,
+                    'token': self.mailing_id._unsubscribe_token(
+                        self.res_id, email_to),
+                }),
             }
         )
         return url
@@ -69,7 +75,7 @@ class MailMail(models.Model):
                     body = body.replace(href, new_href)
 
         # prepend <base> tag for images using absolute urls
-        domain = self.env["ir.config_parameter"].get_param("web.base.url")
+        domain = self.env["ir.config_parameter"].sudo().get_param("web.base.url")
         base = "<base href='%s'>" % domain
         body = tools.append_content_to_html(base, body, plaintext=False, container_tag='div')
         # resolve relative image url to absolute for outlook.com
@@ -89,7 +95,7 @@ class MailMail(models.Model):
     def send_get_email_dict(self, partner=None):
         # TDE: temporary addition (mail was parameter) due to semi-new-API
         res = super(MailMail, self).send_get_email_dict(partner)
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         if self.mailing_id and res.get('body') and res.get('email_to'):
             emails = tools.email_split(res.get('email_to')[0])
             email_to = emails and emails[0] or False
@@ -100,10 +106,10 @@ class MailMail(models.Model):
         return res
 
     @api.multi
-    def _postprocess_sent_message_v9(self, mail_sent=True):
+    def _postprocess_sent_message(self, mail_sent=True):
         for mail in self:
             if mail_sent is True and mail.statistics_ids:
                 mail.statistics_ids.write({'sent': fields.Datetime.now(), 'exception': False})
             elif mail_sent is False and mail.statistics_ids:
                 mail.statistics_ids.write({'exception': fields.Datetime.now()})
-        return super(MailMail, self)._postprocess_sent_message_v9(mail_sent=mail_sent)
+        return super(MailMail, self)._postprocess_sent_message(mail_sent=mail_sent)

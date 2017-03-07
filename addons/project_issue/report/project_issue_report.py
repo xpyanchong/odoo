@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
-from odoo import fields, models, tools
+from odoo import api, fields, models, tools
 
 
 class ProjectIssueReport(models.Model):
@@ -25,13 +25,12 @@ class ProjectIssueReport(models.Model):
     project_id = fields.Many2one('project.project', 'Project', readonly=True)
     user_id = fields.Many2one('res.users', 'Assigned to', readonly=True)
     partner_id = fields.Many2one('res.partner', 'Contact')
-    channel = fields.Char('Channel', readonly=True, help="Communication Channel.")
-    task_id = fields.Many2one('project.task', 'Task')
     email = fields.Integer('# Emails', readonly=True)
 
-    def init(self, cr):
-        tools.drop_view_if_exists(cr, 'project_issue_report')
-        cr.execute("""
+    @api.model_cr
+    def init(self):
+        tools.drop_view_if_exists(self._cr, 'project_issue_report')
+        self._cr.execute("""
             CREATE OR REPLACE VIEW project_issue_report AS (
                 SELECT
                     c.id as id,
@@ -42,17 +41,15 @@ class ProjectIssueReport(models.Model):
                     c.working_hours_open,
                     c.working_hours_close,
                     c.stage_id,
-                    date(c.date_closed) as date_closed,
+                    c.date_closed as date_closed,
                     c.company_id as company_id,
                     c.priority as priority,
                     c.project_id as project_id,
                     1 as nbr_issues,
                     c.partner_id,
-                    c.channel,
-                    c.task_id,
                     c.day_open as delay_open,
                     c.day_close as delay_close,
-                    (SELECT count(id) FROM mail_message WHERE model='project.issue' AND res_id=c.id) AS email
+                    (SELECT count(id) FROM mail_message WHERE model='project.issue' AND message_type IN ('email', 'comment') AND res_id=c.id) AS email
 
                 FROM
                     project_issue c

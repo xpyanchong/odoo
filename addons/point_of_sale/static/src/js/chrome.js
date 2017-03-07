@@ -278,13 +278,19 @@ var DebugWidget = PosBaseWidget.extend({
         });
 
         this.$('.button.export_unpaid_orders').click(function(){
-            self.gui.download_file(self.pos.export_unpaid_orders(),
-                "unpaid_orders_" + (new Date()).toUTCString().replace(/\ /g,'_') + '.json');
+            self.gui.prepare_download_link(
+                self.pos.export_unpaid_orders(),
+                _t("unpaid orders") + ' ' + moment().format('YYYY-MM-DD-HH-mm-ss') + '.json',
+                ".export_unpaid_orders", ".download_unpaid_orders"
+            );
         });
 
         this.$('.button.export_paid_orders').click(function() {
-            self.gui.download_file(self.pos.export_paid_orders(),
-                "paid_orders_" + (new Date()).toUTCString().replace(/\ /g,'_') + '.json');
+            self.gui.prepare_download_link(
+                self.pos.export_paid_orders(),
+                _t("paid orders") + ' ' + moment().format('YYYY-MM-DD-HH-mm-ss') + '.json',
+                ".export_paid_orders", ".download_paid_orders"
+            );
         });
 
         this.$('.button.import_orders input').on('change', function(event) {
@@ -405,6 +411,23 @@ var ProxyStatusWidget = StatusWidget.extend({
         });
     },
 });
+
+
+/* --------- The Sale Details --------- */
+
+// Generates a report to print the sales of the
+// day on a ticket
+
+var SaleDetailsButton = PosBaseWidget.extend({
+    template: 'SaleDetailsButton',
+    start: function(){
+        var self = this;
+        this.$el.click(function(){
+            self.pos.proxy.print_sale_details();
+        });
+    },
+});
+
 
 /*--------------------------------------*\
  |             THE CHROME               |
@@ -663,6 +686,11 @@ var Chrome = PosBaseWidget.extend({
             'widget': OrderSelectorWidget,
             'replace':  '.placeholder-OrderSelectorWidget',
         },{
+            'name':   'sale_details',
+            'widget': SaleDetailsButton,
+            'append':  '.pos-rightheader',
+            'condition': function(){ return this.pos.config.use_proxy; },
+        },{
             'name':   'proxy_status',
             'widget': ProxyStatusWidget,
             'append':  '.pos-rightheader',
@@ -769,6 +797,7 @@ return {
     HeaderButtonWidget: HeaderButtonWidget,
     OrderSelectorWidget: OrderSelectorWidget,
     ProxyStatusWidget: ProxyStatusWidget,
+    SaleDetailsButton: SaleDetailsButton,
     StatusWidget: StatusWidget,
     SynchNotificationWidget: SynchNotificationWidget,
     UsernameWidget: UsernameWidget,

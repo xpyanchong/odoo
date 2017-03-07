@@ -1,5 +1,10 @@
+# -*- coding: utf-8 -*-
+# Part of Odoo. See LICENSE file for full copyright and licensing details.
+
+from odoo.api import Environment
+
 import odoo.tests
-from openerp.api import Environment
+
 
 class TestUi(odoo.tests.HttpCase):
     def test_01_pos_basic_order(self):
@@ -25,18 +30,22 @@ class TestUi(odoo.tests.HttpCase):
                                    'value': 'account.account,' + str(account_receivable.id)})
 
         # set the company currency to USD, otherwise it will assume
-        # euro's. this will cause issues as the sale journal is in
+        # euro's. this will cause issues as the sales journal is in
         # USD, because of this all products would have a different
         # price
         main_company.currency_id = env.ref('base.USD')
 
-        test_sale_journal = journal_obj.create({'name': 'Sale Journal - Test',
+        test_sale_journal = journal_obj.create({'name': 'Sales Journal - Test',
                                                 'code': 'TSJ',
                                                 'type': 'sale',
                                                 'company_id': main_company.id})
 
-        main_pos_config.journal_id = test_sale_journal
-        main_pos_config.write({'journal_ids': [(0, 0, {'name': 'Cash Journal - Test',
+        env['product.pricelist'].search([]).write(dict(currency_id=main_company.currency_id.id))
+
+        main_pos_config.write({
+            'journal_id': test_sale_journal.id,
+            'invoice_journal_id': test_sale_journal.id,
+            'journal_ids': [(0, 0, {'name': 'Cash Journal - Test',
                                                        'code': 'TSC',
                                                        'type': 'cash',
                                                        'company_id': main_company.id,
@@ -53,8 +62,8 @@ class TestUi(odoo.tests.HttpCase):
         cr.release()
 
         self.phantom_js("/pos/web",
-                        "odoo.__DEBUG__.services['web.Tour'].run('pos_basic_order', 'test')",
-                        "odoo.__DEBUG__.services['web.Tour'].tours.pos_basic_order",
+                        "odoo.__DEBUG__.services['web_tour.tour'].run('pos_basic_order')",
+                        "odoo.__DEBUG__.services['web_tour.tour'].tours.pos_basic_order.ready",
                         login="admin")
 
         for order in env['pos.order'].search([]):

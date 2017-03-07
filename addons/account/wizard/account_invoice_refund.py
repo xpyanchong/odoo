@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
-from openerp import models, fields, api, _
-from openerp.tools.safe_eval import safe_eval as eval
-from openerp.exceptions import UserError
+from odoo import models, fields, api, _
+from odoo.tools.safe_eval import safe_eval
+from odoo.exceptions import UserError
 
 
 class AccountInvoiceRefund(models.TransientModel):
@@ -50,8 +50,8 @@ class AccountInvoiceRefund(models.TransientModel):
             date = False
             description = False
             for inv in inv_obj.browse(context.get('active_ids')):
-                if inv.state in ['draft', 'proforma2', 'cancel']:
-                    raise UserError(_('Cannot refund draft/proforma/cancelled invoice.'))
+                if inv.state in ['draft', 'cancel']:
+                    raise UserError(_('Cannot refund draft/cancelled invoice.'))
                 if inv.reconciled and mode in ('cancel', 'modify'):
                     raise UserError(_('Cannot refund invoice which is already reconciled, invoice should be unreconciled first. You can only refund this invoice.'))
 
@@ -71,11 +71,11 @@ class AccountInvoiceRefund(models.TransientModel):
                             to_reconcile_ids.setdefault(line.account_id.id, []).append(line.id)
                         if line.reconciled:
                             line.remove_move_reconcile()
-                    refund.signal_workflow('invoice_open')
+                    refund.action_invoice_open()
                     for tmpline in refund.move_id.line_ids:
                         if tmpline.account_id.id == inv.account_id.id:
                             to_reconcile_lines += tmpline
-                            to_reconcile_lines.reconcile()
+                            to_reconcile_lines.filtered(lambda l: l.reconciled == False).reconcile()
                     if mode == 'modify':
                         invoice = inv.read(
                                     ['name', 'type', 'number', 'reference',
@@ -98,8 +98,8 @@ class AccountInvoiceRefund(models.TransientModel):
                             'invoice_line_ids': invoice_lines,
                             'tax_line_ids': tax_lines,
                             'date': date,
-                            'name': description,
-                            'origin': inv.origin
+                            'origin': inv.origin,
+                            'fiscal_position_id': inv.fiscal_position_id.id,
                         })
                         for field in ('partner_id', 'account_id', 'currency_id',
                                          'payment_term_id', 'journal_id'):
@@ -116,7 +116,7 @@ class AccountInvoiceRefund(models.TransientModel):
                 refund.message_post(body=body, subject=subject)
         if xml_id:
             result = self.env.ref('account.%s' % (xml_id)).read()[0]
-            invoice_domain = eval(result['domain'])
+            invoice_domain = safe_eval(result['domain'])
             invoice_domain.append(('id', 'in', created_inv))
             result['domain'] = invoice_domain
             return result

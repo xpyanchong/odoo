@@ -30,6 +30,12 @@ class PosConfig(models.Model):
     _name = 'pos.config'
 
     def _default_sale_journal(self):
+        journal = self.env.ref('point_of_sale.pos_sale_journal', raise_if_not_found=False)
+        if journal and journal.company_id == self.env.user.company_id:
+            return journal
+        return self._default_invoice_journal()
+
+    def _default_invoice_journal(self):
         return self.env['account.journal'].search([('type', '=', 'sale'), ('company_id', '=', self.env.user.company_id.id)], limit=1)
 
     def _default_pricelist(self):
@@ -52,15 +58,20 @@ class PosConfig(models.Model):
         'account.journal', 'pos_config_journal_rel',
         'pos_config_id', 'journal_id', string='Available Payment Methods',
         domain="[('journal_user', '=', True ), ('type', 'in', ['bank', 'cash'])]",)
-    picking_type_id = fields.Many2one('stock.picking.type', string='Picking Type')
+    picking_type_id = fields.Many2one('stock.picking.type', string='Operation Type')
     stock_location_id = fields.Many2one(
         'stock.location', string='Stock Location',
         domain=[('usage', '=', 'internal')], required=True, default=_get_default_location)
     journal_id = fields.Many2one(
-        'account.journal', string='Sale Journal',
+        'account.journal', string='Sales Journal',
         domain=[('type', '=', 'sale')],
         help="Accounting journal used to post sales entries.",
         default=_default_sale_journal)
+    invoice_journal_id = fields.Many2one(
+        'account.journal', string='Invoice Journal',
+        domain=[('type', '=', 'sale')],
+        help="Accounting journal used to create invoices.",
+        default=_default_invoice_journal)
     currency_id = fields.Many2one('res.currency', compute='_compute_currency', string="Currency")
     iface_cashdrawer = fields.Boolean(string='Cashdrawer', help="Automatically open the cashdrawer")
     iface_payment_terminal = fields.Boolean(string='Payment Terminal', help="Enables Payment Terminal integration")
@@ -71,7 +82,7 @@ class PosConfig(models.Model):
     iface_invoicing = fields.Boolean(string='Invoicing', help='Enables invoice generation from the Point of Sale', default=True)
     iface_big_scrollbars = fields.Boolean('Large Scrollbars', help='For imprecise industrial touchscreens')
     iface_print_auto = fields.Boolean(string='Automatic Receipt Printing', default=False,
-        help='The receipt will automatically be p-rinted at the end of each order')
+        help='The receipt will automatically be printed at the end of each order')
     iface_print_skip_screen = fields.Boolean(string='Skip Receipt Screen', default=True,
         help='The receipt screen will be skipped if the receipt can be printed automatically.')
     iface_precompute_cash = fields.Boolean(string='Prefill Cash Payment',
@@ -93,6 +104,9 @@ class PosConfig(models.Model):
     sequence_id = fields.Many2one('ir.sequence', string='Order IDs Sequence', readonly=True,
         help="This sequence is automatically created by Odoo but you can change it "
         "to customize the reference numbers of your orders.", copy=False)
+    sequence_line_id = fields.Many2one('ir.sequence', string='Order Line IDs Sequence', readonly=True,
+        help="This sequence is automatically created by Odoo but you can change it "
+        "to customize the reference numbers of your orders lines.", copy=False)
     session_ids = fields.One2many('pos.session', 'config_id', string='Sessions')
     current_session_id = fields.Many2one('pos.session', compute='_compute_current_session', string="Current Session")
     current_session_state = fields.Char(compute='_compute_current_session')
@@ -158,7 +172,12 @@ class PosConfig(models.Model):
     @api.constrains('company_id', 'journal_id')
     def _check_company_journal(self):
         if self.journal_id and self.journal_id.company_id.id != self.company_id.id:
-            raise UserError(_("The company of the sale journal is different than the one of point of sale"))
+            raise UserError(_("The company of the sales journal is different than the one of point of sale"))
+
+    @api.constrains('company_id', 'invoice_journal_id')
+    def _check_company_journal(self):
+        if self.invoice_journal_id and self.invoice_journal_id.company_id.id != self.company_id.id:
+            raise UserError(_("The invoice journal and the point of sale must belong to the same company"))
 
     @api.constrains('company_id', 'journal_ids')
     def _check_company_payment(self):
@@ -202,16 +221,15 @@ class PosConfig(models.Model):
         # force sequence_id field to new pos.order sequence
         values['sequence_id'] = IrSequence.create(val).id
 
-        # TODO master: add field sequence_line_id on model
-        # this make sure we always have one available per company
         val.update(name=_('POS order line %s') % values['name'], code='pos.order.line')
-        IrSequence.create(val)
+        values['sequence_line_id'] = IrSequence.create(val).id
         return super(PosConfig, self).create(values)
 
     @api.multi
     def unlink(self):
-        for pos_config in self.filtered(lambda pos_config: pos_config.sequence_id):
+        for pos_config in self.filtered(lambda pos_config: pos_config.sequence_id or pos_config.sequence_line_id):
             pos_config.sequence_id.unlink()
+            pos_config.sequence_line_id.unlink()
         return super(PosConfig, self).unlink()
 
     # Methods to open the POS
@@ -227,7 +245,8 @@ class PosConfig(models.Model):
     @api.multi
     def open_existing_session_cb_close(self):
         assert len(self.ids) == 1, "you can open only one session at a time"
-        self.current_session_id.signal_workflow('cashbox_control')
+        if self.current_session_id.cash_control:
+            self.current_session_id.action_pos_session_closing_control()
         return self.open_session_cb()
 
     @api.multi

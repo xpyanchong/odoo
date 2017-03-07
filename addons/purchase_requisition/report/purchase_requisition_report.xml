@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<openerp>
+<odoo>
     <data>
         <report 
             string="Call for Tenders" 
@@ -9,5 +9,8 @@
             name="purchase_requisition.report_purchaserequisitions" 
             file="purchase_requisition.report.report_purchaserequisitions"
          />
+        <record id="action_report_purchase_requisitions" model="ir.actions.report.xml">
+            <field name="print_report_name">'Tender'+'-'+(object.name)</field>
+        </record>
     </data>
-</openerp>
+</odoo>

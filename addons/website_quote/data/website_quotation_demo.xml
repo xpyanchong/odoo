@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<openerp>
-    <data>
+<odoo>
         <record id="product_template_quote_1" model="product.template">
             <field name="name">Functional Training</field>
             <field name="categ_id" ref="product.product_category_3"/>
@@ -411,7 +410,7 @@
                                     <li>Participants preferably have a functional knowledge of our software (see Functional Training).</li>
                                 </ul><p>&amp;nbsp;</p>
 
-                                <p>To get more information, visit the <a href="https://www.odoo.com/">Odoo Official Website</a>.</p>
+                                <p>To get more information, visit the <a target="_blank" href="https://www.odoo.com/">Odoo Official Website</a>.</p>
                             </div>
                         </div>
                     </div>
@@ -485,7 +484,7 @@
                                         <li class="list-group-item">Convert Lead to Opportunity &amp; Customer management</li>
                                         <li class="list-group-item">Schedule Phone Calls and Meetings</li>
                                         <li class="list-group-item">Negotiation and Quotation Revisions</li>
-                                        <li class="list-group-item">Generate Sale Order &amp; direct mail to customer</li>
+                                        <li class="list-group-item">Generate Sales Order &amp; direct mail to customer</li>
                                     </ul>
                                 </div>
                             </div>
@@ -516,13 +515,11 @@
                                     <li>Participants preferably have a functional knowledge of our software (see Functional Training).</li>
                                 </ul><p></p>
 
-                                <p>To get more information, visit the <a href="http://openerp.com/">Odoo Official Website</a>.</p>
+                                <p>To get more information, visit the <a target="_blank" href="http://openerp.com/">Odoo Official Website</a>.</p>
                             </div>
                         </div>
                     </div>
                 </section>
             </field>
         </record>
-
-    </data>
-</openerp>
+</odoo>

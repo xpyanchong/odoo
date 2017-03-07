@@ -10,7 +10,6 @@ var framework = require('web.framework');
 var Model = require('web.Model');
 var session = require('web.session');
 var SystrayMenu = require('web.SystrayMenu');
-var Tour = require('web.Tour');
 var utils = require('web.utils');
 var ViewManager = require('web.ViewManager');
 var WebClient = require('web.WebClient');
@@ -49,7 +48,6 @@ var DebugManager = Widget.extend({
         }
     },
     start: function () {
-        core.bus.on('action_pushed', this, this.update);
         core.bus.on('rpc:result', this, function (req, resp) {
             this._debug_events(resp.debug);
         });
@@ -66,7 +64,7 @@ var DebugManager = Widget.extend({
         // whether group is currently enabled for current user
         this._has_features = false;
         // whether the current user is an administrator
-        this._is_admin = session.is_admin;
+        this._is_admin = session.is_system;
         return $.when(
             new Model('res.users').call('check_access_rights', {operation: 'write', raise_exception: false}),
             session.user_has_group('base.group_no_one'),
@@ -159,19 +157,6 @@ var DebugManager = Widget.extend({
             }));
         return $.when();
     },
-    start_tour: function() {
-        var dialog = new Dialog(this, {
-            title: 'Tours',
-            $content: QWeb.render('WebClient.DebugManager.ToursDialog', {
-                tours: Tour.tours
-            }),
-        }).open();
-
-        dialog.$('.o_start_tour').on('click', function(e) {
-            e.preventDefault();
-            odoo.__DEBUG__.services['web.Tour'].run($(e.target).data('id'));
-        });
-    },
     select_view: function () {
         var self = this;
         new common.SelectCreateDialog(this, {
@@ -200,15 +185,6 @@ var DebugManager = Widget.extend({
             target: 'new',
             type: 'ir.actions.act_url',
             url: '/web/tests?mod=*'
-        });
-    },
-    toggle_technical_features: function () {
-        if (!this._features_group) { return; }
-        var command = this._has_features ? REMOVE(this._features_group) : ADD(this._features_group);
-        new Model('res.users').call('write', [session.uid, {
-            groups_id: [command]
-        }]).then(function () {
-            window.location.reload();
         });
     },
     split_assets: function() {
@@ -341,7 +317,7 @@ DebugManager.include({
         if (!this._active_view.controller.get_selected_ids().length) {
             console.warn(_t("No metadata available"));
             return
-        }        
+        }
         ds.call('get_metadata', [this._active_view.controller.get_selected_ids()]).done(function(result) {
             new Dialog(this, {
                 title: _.str.sprintf(_t("Metadata (%s)"), ds.model),
@@ -661,18 +637,12 @@ if (core.debug) {
     SystrayMenu.Items.push(DebugManager);
 
     WebClient.include({
-        start: function() {
-            var self = this;
-            return this._super().then(function () {
-                // Override push_action so that it triggers an event each time a new action is pushed
-                // The DebugManager listens to this event to keep itself up-to-date
-                var push_action = self.action_manager.push_action;
-                self.action_manager.push_action = function(widget, descr) {
-                    return push_action.apply(self.action_manager, arguments).then(function () {
-                        core.bus.trigger('action_pushed', 'action', descr, widget);
-                    });
-                };
-            });
+        current_action_updated: function(action) {
+            this._super.apply(this, arguments);
+            var action_descr = action && action.action_descr;
+            var action_widget = action && action.widget;
+            var debug_manager = _.find(this.systray_menu.widgets, function(item) {return item instanceof DebugManager; });
+            debug_manager.update('action', action_descr, action_widget);
         },
     });
 

@@ -548,9 +548,6 @@ var DataSet =  Class.extend(mixins.PropertiesMixin, {
     name_create: function(name, context) {
         return this._model.call('name_create', [name], {context: this.get_context(context)});
     },
-    exec_workflow: function (id, signal) {
-        return this._model.exec_workflow(id, signal);
-    },
     get_context: function(request_context) {
         return this._model.context(request_context);
     },
@@ -688,7 +685,7 @@ var DataSetSearch = DataSet.extend({
             .limit(options.limit || false);
         q = q.order_by.apply(q, this._sort);
 
-        return q.all().done(function (records) {
+        return this.orderer.add(q.all()).done(function (records) {
             // FIXME: not sure about that one, *could* have discarded count
             q.count().done(function (count) { self._length = count; });
             self.ids = _(records).pluck('id');
@@ -708,6 +705,13 @@ var DataSetSearch = DataSet.extend({
         this._super(ids);
         if (this._length) {
             this._length -= (before - this.ids.length);
+        }
+    },
+    add_ids: function(ids, at) {
+        var before = this.ids.length;
+        this._super(ids, at);
+        if(this._length){
+            this._length += (this.ids.length - before);
         }
     },
     unlink: function(ids, callback, error_callback) {
@@ -786,18 +790,19 @@ var BufferedDataSet = DataSetStatic.extend({
         var def = $.Deferred();
         this.mutex.exec(function () {
             var dirty = false;
-            _.each(data, function (v, k) {
-                if (!_.isEqual(v, cached.values[k])) {
+            // _.each is broken if a field "length" is present
+            for (var k in data) {
+                if (!_.isEqual(data[k], cached.values[k])) {
                     dirty = true;
-                    if (_.isEqual(v, cached.from_read[k])) { // clean changes
+                    if (_.isEqual(data[k], cached.from_read[k])) { // clean changes
                         delete cached.changes[k];
                     } else {
-                        cached.changes[k] = v;
+                        cached.changes[k] = data[k];
                     }
                 } else {
                     delete data[k];
                 }
-            });
+            }
             self._update_cache(id, options);
 
             if (dirty) {
@@ -931,10 +936,6 @@ var BufferedDataSet = DataSetStatic.extend({
     call_button: function (method, args) {
         this.evict_record(args[0][0]);
         return this._super(method, args);
-    },
-    exec_workflow: function (id, signal) {
-        this.evict_record(id);
-        return this._super(id, signal);
     },
     alter_ids: function(n_ids, options) {
         var dirty = !_.isEqual(this.ids, n_ids);

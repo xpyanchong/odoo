@@ -2,8 +2,8 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 from odoo import api, fields, models, _
-from openerp.exceptions import ValidationError
-
+from odoo.exceptions import ValidationError
+from werkzeug import url_encode
 
 class HrExpenseRegisterPaymentWizard(models.TransientModel):
 
@@ -53,15 +53,9 @@ class HrExpenseRegisterPaymentWizard(models.TransientModel):
             return {'domain': {'payment_method_id': [('payment_type', '=', 'outbound'), ('id', 'in', payment_methods.ids)]}}
         return {}
 
-    @api.multi
-    def expense_post_payment(self):
-        self.ensure_one()
-        context = dict(self._context or {})
-        active_ids = context.get('active_ids', [])
-        expense_sheet = self.env['hr.expense.sheet'].browse(active_ids)
-
-        # Create payment and post it
-        payment = self.env['account.payment'].create({
+    def get_payment_vals(self):
+        """ Hook for extension """
+        return {
             'partner_type': 'supplier',
             'payment_type': 'outbound',
             'partner_id': self.partner_id.id,
@@ -72,11 +66,21 @@ class HrExpenseRegisterPaymentWizard(models.TransientModel):
             'currency_id': self.currency_id.id,
             'payment_date': self.payment_date,
             'communication': self.communication
-        })
+        }
+
+    @api.multi
+    def expense_post_payment(self):
+        self.ensure_one()
+        context = dict(self._context or {})
+        active_ids = context.get('active_ids', [])
+        expense_sheet = self.env['hr.expense.sheet'].browse(active_ids)
+
+        # Create payment and post it
+        payment = self.env['account.payment'].create(self.get_payment_vals())
         payment.post()
 
         # Log the payment in the chatter
-        body = (_("A payment of %s %s with the reference %s related to your expense %s has been made.") % (payment.amount, payment.currency_id.symbol, payment.name, expense_sheet.name))
+        body = (_("A payment of %s %s with the reference <a href='/mail/view?%s'>%s</a> related to your expense %s has been made.") % (payment.amount, payment.currency_id.symbol, url_encode({'model': 'account.payment', 'res_id': payment.id}), payment.name, expense_sheet.name))
         expense_sheet.message_post(body=body)
 
         # Reconcile the payment and the expense, i.e. lookup on the payable account move lines

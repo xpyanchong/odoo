@@ -134,7 +134,7 @@ dom.hasProgrammaticStyle = function (node) {
 };
 dom.mergeFilter = function (prev, cur, parent) {
     // merge text nodes
-    if (prev && (dom.isText(prev) || ("H1 H2 H3 H4 H5 H6 LI P".indexOf(prev.tagName) !== -1 && prev !== cur.parentNode)) && dom.isText(cur)) {
+    if (prev && (dom.isText(prev) || (['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'P'].indexOf(prev.tagName) !== -1 && prev !== cur.parentNode)) && dom.isText(cur)) {
         return true;
     }
     if (prev && prev.tagName === "P" && dom.isText(cur)) {
@@ -931,17 +931,26 @@ options.keyMap.mac['ESCAPE'] = 'cancel';
 options.keyMap.mac['UP'] = 'up';
 options.keyMap.mac['DOWN'] = 'down';
 
+options.styleTags = ['p', 'pre', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote'];
+
 $.summernote.pluginEvents.insertTable = function (event, editor, layoutInfo, sDim) {
   var $editable = layoutInfo.editable();
   var dimension = sDim.split('x');
   var r = range.create();
   if (!r) return;
-  r = r.deleteContents();
+  r = r.deleteContents(true);
 
-  var isBodyContainer = dom.isBodyContainer;
-  dom.isBodyContainer = dom.isNotBreakable;
-  r.insertNode(editor.table.createTable(dimension[0], dimension[1]));
-  dom.isBodyContainer = isBodyContainer;
+  var table = editor.table.createTable(dimension[0], dimension[1]);
+  var parent = r.sc;
+  while (dom.isText(parent.parentNode) || dom.isRemovableEmptyNode(parent.parentNode)) {
+    parent = parent.parentNode;
+  }
+  var node = dom.splitTree(parent, {'node': r.sc, 'offset': r.so}) || r.sc;
+  node.parentNode.insertBefore(table, node);
+
+  if ($(node).text() === '' || node.textContent === '\u00A0') {
+    node.parentNode.removeChild(node);
+  }
 
   editor.afterCommand($editable);
   event.preventDefault();
@@ -1160,8 +1169,6 @@ $.summernote.pluginEvents.visible = function (event, editor, layoutInfo) {
         if (dom.isCell(dom.node(r.sc)) || dom.isCell(dom.node(r.ec))) {
             remove_table_content(r);
             r = range.create(r.ec, 0).select();
-        } else {
-            r = r.deleteContents(true);
         }
         r.select();
     }
@@ -2302,6 +2309,18 @@ eventHandler.modules.popover.update = function ($popover, oStyle, isAirMode) {
     }
 };
 
+// override summernote clipboard functionality
+eventHandler.modules.clipboard.attach = function(layoutInfo) {
+    var $editable = layoutInfo.editable();
+    $editable.on('paste', function(e) {
+        e.preventDefault();
+        $editable.data('NoteHistory').recordUndo($editable);
+        var pastedText = ((e.originalEvent || e).clipboardData || window.clipboardData).getData('Text');
+        var formattedText = pastedText.replace(/([^.!?:;])\r?\n/g, "$1").trim(); // Remove linebreaks which are not at the end of a sentence
+        document.execCommand("insertText", false, formattedText);
+    });
+};
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 var fn_attach = eventHandler.attach;
@@ -2317,6 +2336,9 @@ eventHandler.detach = function (oLayoutInfo, options) {
     $editable.off("scroll", summernote_table_scroll);
     $('.o_table_handler').remove();
 };
+
+options.icons.image.image = "file-image-o";
+$.summernote.lang['en-US'].image.image = "File / Image";
 
 return $.summernote;
 

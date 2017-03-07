@@ -83,17 +83,14 @@ var FormView = View.extend(common.FieldManagerMixin, {
         core.bus.on('clear_uncommitted_changes', this, function(chain_callbacks) {
             var self = this;
             chain_callbacks(function() {
-                var def = $.Deferred();
-                self.can_be_discarded().then(function() {
-                    def.resolve();
-                }).fail(function() {
-                    def.reject();
-                });
-                return def;
+                return self.can_be_discarded();
             });
         });
     },
     start: function() {
+        if (this.$pager) {
+            this.$pager.off();
+        }
         var self = this;
 
         this.rendering_engine.set_fields_registry(this.fields_registry);
@@ -336,7 +333,7 @@ var FormView = View.extend(common.FieldManagerMixin, {
                 } else {
                     self.do_push_state({});
                 }
-                self.$el.removeClass('oe_form_dirty');                
+                self.$el.removeClass('oe_form_dirty');
             });
          });
     },
@@ -659,7 +656,6 @@ var FormView = View.extend(common.FieldManagerMixin, {
             self.trigger("save", result);
             return self.reload().then(function() {
                 self.to_view_mode();
-                core.bus.trigger('do_reload_needaction');
                 core.bus.trigger('form_view_saved', self);
             });
         }).always(function(){
@@ -1163,7 +1159,11 @@ var FormView = View.extend(common.FieldManagerMixin, {
         return this.fields[field_name].get_value();
     },
     compute_domain: function(expression) {
-        return data.compute_domain(expression, this.fields);
+        var fields = this.fields;
+        if (!fields.id) {
+            fields = _.extend({id: {value: this.datarecord.id || false}}, fields);
+        }
+        return data.compute_domain(expression, fields);
     },
     _build_view_fields_values: function() {
         var a_dataset = this.dataset;

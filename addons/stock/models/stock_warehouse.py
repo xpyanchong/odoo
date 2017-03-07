@@ -10,6 +10,10 @@ from odoo.addons import decimal_precision as dp
 from odoo.exceptions import UserError, ValidationError
 from odoo.tools import DEFAULT_SERVER_DATE_FORMAT
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
 
 class Warehouse(models.Model):
     _name = "stock.warehouse"
@@ -53,9 +57,9 @@ class Warehouse(models.Model):
     out_type_id = fields.Many2one('stock.picking.type', 'Out Type')
     in_type_id = fields.Many2one('stock.picking.type', 'In Type')
     int_type_id = fields.Many2one('stock.picking.type', 'Internal Type')
-    crossdock_route_id = fields.Many2one('stock.location.route', 'Crossdock Route')
-    reception_route_id = fields.Many2one('stock.location.route', 'Receipt Route')
-    delivery_route_id = fields.Many2one('stock.location.route', 'Delivery Route')
+    crossdock_route_id = fields.Many2one('stock.location.route', 'Crossdock Route', ondelete='restrict')
+    reception_route_id = fields.Many2one('stock.location.route', 'Receipt Route', ondelete='restrict')
+    delivery_route_id = fields.Many2one('stock.location.route', 'Delivery Route', ondelete='restrict')
     resupply_wh_ids = fields.Many2many(
         'stock.warehouse', 'stock_wh_resupply_table', 'supplied_wh_id', 'supplier_wh_id',
         'Resupply Warehouses')
@@ -103,7 +107,7 @@ class Warehouse(models.Model):
 
         # actually create WH
         warehouse = super(Warehouse, self).create(vals)
-        # create sequences and picking types
+        # create sequences and operation types
         new_vals = warehouse.create_sequences_and_picking_types()
         warehouse.write(new_vals)  # TDE FIXME: use super ?
         # create routes and push/procurement rules
@@ -133,7 +137,7 @@ class Warehouse(models.Model):
         if vals.get('resupply_wh_ids') and not vals.get('resupply_route_ids'):
             resupply_whs = self.resolve_2many_commands('resupply_wh_ids', vals['resupply_wh_ids'])
             new_resupply_whs = self.browse([wh['id'] for wh in resupply_whs])
-            old_resupply_whs = {(warehouse.id, warehouse.resupply_wh_ids) for warehouse in warehouses}
+            old_resupply_whs = {warehouse.id: warehouse.resupply_wh_ids for warehouse in warehouses}
 
         if 'default_resupply_wh_id' in vals:
             if vals.get('default_resupply_wh_id') and any(vals['default_resupply_wh_id'] == warehouse.id for warehouse in warehouses):
@@ -182,13 +186,13 @@ class Warehouse(models.Model):
 
         input_loc, output_loc = self._get_input_output_locations(self.reception_steps, self.delivery_steps)
 
-        # choose the next available color for the picking types of this warehouse
+        # choose the next available color for the operation types of this warehouse
         all_used_colors = [res['color'] for res in PickingType.search_read([('warehouse_id', '!=', False), ('color', '!=', False)], ['color'], order='color')]
         available_colors = [zef for zef in [0, 3, 4, 5, 6, 7, 8, 1, 2] if zef not in all_used_colors]
         color = available_colors and available_colors[0] or 0
 
         # suit for each warehouse: reception, internal, pick, pack, ship
-        max_sequence = PickingType.search_read([], ['sequence'], limit=1, order='sequence desc')
+        max_sequence = PickingType.search_read([('sequence', '!=', False)], ['sequence'], limit=1, order='sequence desc')
         max_sequence = max_sequence and max_sequence[0]['sequence'] or 0
 
         warehouse_data = {}
@@ -452,7 +456,6 @@ class Warehouse(models.Model):
             'product_categ_selectable': True,
             'supplied_wh_id': self.id,
             'supplier_wh_id': supplier_warehouse.id}
-    _get_inter_wh_route = _get_inter_warehouse_route_values  # compatibility
 
     def _get_crossdock_route_values(self):
         return {
@@ -462,9 +465,6 @@ class Warehouse(models.Model):
             'product_categ_selectable': True,
             'active': self.delivery_steps != 'ship_only' and self.reception_steps != 'one_step',
             'sequence': 20}
-
-    def _get_crossdock_route(self, route_name):  # compatibility
-        return self._get_crossdock_route_values()
 
     # Pull / Push tools
     # ------------------------------------------------------------
@@ -503,10 +503,6 @@ class Warehouse(models.Model):
             'procure_method': 'make_to_order',
             'active': True}, name_suffix=_('MTO'))
         return pull_rules_list
-    _get_mto_pull_rule = _get_mto_pull_rules_values  # compatibility
-
-    def _get_push_pull_rules(self, active, values, new_route_id):  # compatibility
-        return self._get_push_pull_rules_values(values, values={'active': active, 'route_id': new_route_id})
 
     def _get_supply_pull_rules_values(self, route_values, values=None):
         dummy, pull_rules_list = self._get_push_pull_rules_values(route_values, values=values, pull_values={'active': True})
@@ -523,7 +519,6 @@ class Warehouse(models.Model):
             if delivery_new and warehouse.delivery_steps != delivery_new and (warehouse.delivery_steps == 'ship_only' or delivery_new == 'ship_only'):
                 change_to_multiple = warehouse.delivery_steps == 'ship_only'
                 warehouse._check_delivery_resupply(output_loc, change_to_multiple)
-    _check_resupply = _update_reception_delivery_resupply
 
     def _check_delivery_resupply(self, new_location, change_to_multiple):
         """ Check if the resupply routes from this warehouse follow the changes of number of delivery steps
@@ -558,7 +553,7 @@ class Warehouse(models.Model):
     @api.multi
     def _update_routes(self):
         routes_data = self.get_routes_dict()
-        # change the default source and destination location and (de)activate picking types
+        # change the default source and destination location and (de)activate operation types
         self._update_picking_type()
         # update delivery route and rules: unlink the existing rules of the warehouse delivery route and recreate it
         self._create_or_update_delivery_route(routes_data)
@@ -567,7 +562,6 @@ class Warehouse(models.Model):
         self._create_or_update_crossdock_route(routes_data)
         self._create_or_update_mto_pull(routes_data)
         return True
-    change_route = _update_routes
 
     @api.one
     def _update_picking_type(self):
@@ -597,7 +591,6 @@ class Warehouse(models.Model):
             warehouse.pack_type_id.sequence_id.write(sequence_data['pack_type_id'])
             warehouse.pick_type_id.sequence_id.write(sequence_data['pick_type_id'])
             warehouse.int_type_id.sequence_id.write(sequence_data['int_type_id'])
-    _handle_renaming = _update_name_and_code
 
     def _update_location_reception(self, new_reception_step):
         switch_warehouses = self.filtered(lambda wh: wh.reception_steps != new_reception_step and not wh._location_used(wh.wh_input_stock_loc_id))
@@ -732,15 +725,15 @@ class Orderpoint(models.Model):
         readonly=True, required=True,
         default=lambda self: self._context.get('product_uom', False))
     product_min_qty = fields.Float(
-        'Minimum Quantity', digits_compute=dp.get_precision('Product Unit of Measure'), required=True,
+        'Minimum Quantity', digits=dp.get_precision('Product Unit of Measure'), required=True,
         help="When the virtual stock goes below the Min Quantity specified for this field, Odoo generates "
              "a procurement to bring the forecasted quantity to the Max Quantity.")
     product_max_qty = fields.Float(
-        'Maximum Quantity', digits_compute=dp.get_precision('Product Unit of Measure'), required=True,
+        'Maximum Quantity', digits=dp.get_precision('Product Unit of Measure'), required=True,
         help="When the virtual stock goes below the Min Quantity, Odoo generates "
              "a procurement to bring the forecasted quantity to the Quantity specified as Max Quantity.")
     qty_multiple = fields.Float(
-        'Qty Multiple', digits_compute=dp.get_precision('Product Unit of Measure'),
+        'Qty Multiple', digits=dp.get_precision('Product Unit of Measure'),
         default=1, required=True,
         help="The procurement quantity will be rounded up to this multiple.  If it is 0, the exact quantity will be used.")
     procurement_ids = fields.One2many('procurement.order', 'orderpoint_id', 'Created Procurements')
@@ -761,7 +754,7 @@ class Orderpoint(models.Model):
         ('qty_multiple_check', 'CHECK( qty_multiple >= 0 )', 'Qty Multiple must be greater than or equal to zero.'),
     ]
 
-    @api.constrains('product_id', 'product_uom')
+    @api.constrains('product_id')
     def _check_product_uom(self):
         ''' Check if the UoM has the same category as the product standard UoM '''
         if any(orderpoint.product_id.uom_id.category_id != orderpoint.product_uom.category_id for orderpoint in self):
@@ -801,16 +794,19 @@ class Orderpoint(models.Model):
         for orderpoint_id, procurement_id, product_uom_id, procurement_qty, template_uom_id, move_qty in self._cr.fetchall():
             if procurement_id not in procurements_done:  # count procurement once, if multiple move in this orderpoint/procurement combo
                 procurements_done.add(procurement_id)
-                res[orderpoint_id] += UoM._compute_qty(product_uom_id, procurement_qty, template_uom_id, round=False)
+                res[orderpoint_id] += UoM.browse(product_uom_id)._compute_quantity(procurement_qty, UoM.browse(template_uom_id), round=False)
             if move_qty:
                 res[orderpoint_id] -= move_qty
         return res
 
-    def _get_date_planned(self, start_date):
+    def _get_date_planned(self, product_qty, start_date):
         days = self.lead_days or 0.0
-        if self.lead_type == 'purchase':
+        if self.lead_type == 'supplier':
             # These days will be substracted when creating the PO
-            days += self.product_id._select_seller(self.product_id).delay or 0.0
+            days += self.product_id._select_seller(
+                quantity=product_qty,
+                date=fields.Date.to_string(start_date),
+                uom_id=self.product_uom).delay or 0.0
         date_planned = start_date + relativedelta.relativedelta(days=days)
         return date_planned.strftime(DEFAULT_SERVER_DATE_FORMAT)
 
@@ -818,7 +814,7 @@ class Orderpoint(models.Model):
     def _prepare_procurement_values(self, product_qty, date=False, group=False):
         return {
             'name': self.name,
-            'date_planned': date or self._get_date_planned(datetime.today()),
+            'date_planned': date or self._get_date_planned(product_qty, datetime.today()),
             'product_id': self.product_id.id,
             'product_qty': product_qty,
             'company_id': self.company_id.id,

@@ -10,6 +10,16 @@ from odoo.tools import float_utils
 class Inventory(models.Model):
     _name = "stock.inventory"
     _description = "Inventory"
+    _order = "date desc, id desc"
+
+    @api.model
+    def _default_location_id(self):
+        company_user = self.env.user.company_id
+        warehouse = self.env['stock.warehouse'].search([('company_id', '=', company_user.id)], limit=1)
+        if warehouse:
+            return warehouse.lot_stock_id.id
+        else:
+            raise UserError(_('You must define a warehouse for the company: %s.') % (company_user.name,))
 
     name = fields.Char(
         'Inventory Reference',
@@ -43,7 +53,7 @@ class Inventory(models.Model):
         'stock.location', 'Inventoried Location',
         readonly=True, required=True,
         states={'draft': [('readonly', False)]},
-        default=lambda self: getattr(self.env.ref('stock.warehouse0', raise_if_not_found=False) or self.env['stock.warehouse]'], 'lot_stock_id').id)
+        default=_default_location_id)
     product_id = fields.Many2one(
         'product.product', 'Inventoried Product',
         readonly=True,
@@ -79,8 +89,13 @@ class Inventory(models.Model):
     exhausted = fields.Boolean('Include Exhausted Products', readonly=True, states={'draft': [('readonly', False)]})
 
     @api.one
+    @api.depends('product_id', 'line_ids.product_qty')
     def _compute_total_qty(self):
-        self.total_qty = sum(self.mapped('line_ids').mapped('product_qty'))
+        """ For single product inventory, total quantity of the counted """
+        if self.product_id:
+            self.total_qty = sum(self.mapped('line_ids').mapped('product_qty'))
+        else:
+            self.total_qty = 0
 
     @api.model
     def _selection_filter(self):
@@ -91,14 +106,12 @@ class Inventory(models.Model):
             ('category', _('One product category')),
             ('product', _('One product only')),
             ('partial', _('Select products manually'))]
-        stock_settings = self.env['stock.config.settings'].search([], limit=1, order='id DESC')
-        if not stock_settings:
-            return res_filter
-        if stock_settings.group_stock_tracking_owner:
+
+        if self.user_has_groups('stock.group_tracking_owner'):
             res_filter += [('owner', _('One owner only')), ('product_owner', _('One product for a specific owner'))]
-        if stock_settings.group_stock_production_lot:
+        if self.user_has_groups('stock.group_production_lot'):
             res_filter.append(('lot', _('One Lot/Serial Number')))
-        if stock_settings.group_stock_tracking_lot:
+        if self.user_has_groups('stock.group_tracking_lot'):
             res_filter.append(('pack', _('A Pack')))
         return res_filter
 
@@ -116,6 +129,11 @@ class Inventory(models.Model):
             self.category_id = False
         if self.filter == 'product':
             self.exhausted = True
+
+    @api.onchange('location_id')
+    def onchange_location_id(self):
+        if self.location_id.company_id:
+            self.company_id = self.location_id.company_id
 
     @api.one
     @api.constrains('filter', 'product_id', 'lot_id', 'partner_id', 'package_id')
@@ -175,11 +193,11 @@ class Inventory(models.Model):
 
     @api.multi
     def action_start(self):
-        for inventory in self.filtered(lambda inventory: not inventory.line_ids and inventory.filter != 'partial'):
-            self.write({
-                'line_ids': [(0, 0, line_values) for line_values in inventory._get_inventory_lines_values()],
-                'state': 'confirm', 'date': fields.Datetime.now()
-            })
+        for inventory in self:
+            vals = {'state': 'confirm', 'date': fields.Datetime.now()}
+            if (inventory.filter != 'partial') and not inventory.line_ids:
+                vals.update({'line_ids': [(0, 0, line_values) for line_values in inventory._get_inventory_lines_values()]})
+            inventory.write(vals)
         return True
     prepare_inventory = action_start
 
@@ -197,6 +215,11 @@ class Inventory(models.Model):
         # Empty recordset of products to filter
         products_to_filter = self.env['product.product']
 
+        # case 0: Filter on company
+        if self.company_id:
+            domain += ' AND company_id = %s'
+            args += (self.company_id.id,)
+        
         #case 1: Filter on One owner only or One product for a specific owner
         if self.partner_id:
             domain += ' AND owner_id = %s'
@@ -284,7 +307,7 @@ class InventoryLine(models.Model):
         default=lambda self: self.env.ref('product.product_uom_unit', raise_if_not_found=True))
     product_qty = fields.Float(
         'Checked Quantity',
-        digits_compute=dp.get_precision('Product Unit of Measure'), default=0)
+        digits=dp.get_precision('Product Unit of Measure'), default=0)
     location_id = fields.Many2one(
         'stock.location', 'Location',
         index=True, required=True)
@@ -308,7 +331,7 @@ class InventoryLine(models.Model):
         'Status',  related='inventory_id.state', readonly=True)
     theoretical_qty = fields.Float(
         'Theoretical Quantity', compute='_compute_theoretical_qty',
-        digits_compute=dp.get_precision('Product Unit of Measure'), readonly=True, store=True)
+        digits=dp.get_precision('Product Unit of Measure'), readonly=True, store=True)
 
     @api.one
     @api.depends('location_id', 'product_id', 'package_id', 'product_uom_id', 'company_id', 'prod_lot_id', 'partner_id')
@@ -318,14 +341,14 @@ class InventoryLine(models.Model):
             return
         theoretical_qty = sum([x.qty for x in self._get_quants()])
         if theoretical_qty and self.product_uom_id and self.product_id.uom_id != self.product_uom_id:
-            theoretical_qty = self.env["product.uom"]._compute_qty_obj(self.product_id.uom_id, theoretical_qty, self.product_uom_id)
+            theoretical_qty = self.product_id.uom_id._compute_quantity(theoretical_qty, self.product_uom_id)
         self.theoretical_qty = theoretical_qty
 
-    @api.onchange('product_id', 'product_uom_id')
-    def onchange_product_or_uom(self):
+    @api.onchange('product_id')
+    def onchange_product(self):
         res = {}
         # If no UoM or incorrect UoM put default one from product
-        if self.product_id and (not self.product_uom_id or self.product_id.uom_id.category_id != self.product_uom_id.category_id):
+        if self.product_id:
             self.product_uom_id = self.product_id.uom_id
             res['domain'] = {'product_uom_id': [('category_id', '=', self.product_id.uom_id.category_id.id)]}
         return res

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
-from openerp.addons.sale.tests.test_sale_common import TestSale
+
+from odoo.addons.sale.tests.test_sale_common import TestSale
 
 
 class TestSaleExpense(TestSale):
@@ -51,7 +52,7 @@ class TestSaleExpense(TestSale):
         self.assertEqual((sol.price_unit, sol.qty_delivered), (621.54, 1.0), 'Sale Expense: error when invoicing an expense at cost')
         self.assertEqual(so.amount_total, init_price, 'Sale Expense: price of so not updated after adding expense')
 
-        # create some expense and validate it (expense at sales price)
+        # create some expense and validate it (expense at sale price)
         init_price = so.amount_total
         prod_exp_2 = self.env.ref('hr_expense.car_travel')
         # Submit to Manager

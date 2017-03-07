@@ -1,4 +1,4 @@
-@odoo-list-group-header-color: lighten(@odoo-list-grey, 10%);
+@odoo-list-group-header-color: lighten(@odoo-brand-lightsecondary, 10%);
 .o_list_view {
     cursor: pointer;
     background-color: @odoo-view-background-color;
@@ -79,7 +79,7 @@
     // Grouped list views
     tbody > tr.o_group_header {
         .o-vertical-gradient(#fcfcfc, #dedede);
-        
+
         .o_group_name {
             white-space: nowrap;
         }
@@ -93,6 +93,9 @@
                     background-color: darken(@odoo-list-group-header-color, 10%);
                 }
             }
+        }
+        > td.oe_number{
+            text-align: right;
         }
     }
     tbody + tbody {
@@ -114,6 +117,10 @@
     .o_temp_visible {
         opacity: 0;
         display: block!important;
+
+        &.o_form_invisible {
+            display: block!important;
+        }
     }
 
     .o_list_view {
@@ -123,9 +130,18 @@
                 visibility: visible;
             }
 
+            &.o_list_record_delete {
+                opacity: 0.5;
+                pointer-events: none;
+            }
+
             &.o_readonly {
                 visibility: visible;
                 color: transparent;
+
+                > .o_checkbox {
+                    visibility: hidden;
+                }
             }
         }
     }
@@ -146,7 +162,7 @@
                 max-width: 100%; // Fix a chrome bug where badge would not break on multiple lines
             }
 
-            &.o_readonly {
+            &.o_readonly:not(.o_checkbox) {
                 background-color: transparent;
                 padding: 5px;
             }
@@ -200,6 +216,15 @@
         }
         .o_form_field_number {
             text-align: right;
+        }
+    }
+}
+
+// Workaround a bug in safari mobile where the inputs are not displayed correctly.
+.modal {
+    .o_list_editable {
+        .o_form_view.o_list_editable_form {
+            -webkit-overflow-scrolling: auto;
         }
     }
 }

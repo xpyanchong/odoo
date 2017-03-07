@@ -8,27 +8,27 @@ import time
 from odoo import api, fields, models, _
 from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
 from odoo.tools.float_utils import float_compare
-from odoo.addons.procurement import procurement
+from odoo.addons.procurement.models import procurement
 from odoo.exceptions import UserError
 
 
 class PickingType(models.Model):
     _name = "stock.picking.type"
-    _description = "The picking type determines the picking view"
-    _order = 'sequence'
+    _description = "The operation type determines the picking view"
+    _order = 'sequence, id'
 
-    name = fields.Char('Picking Type Name', required=True, translate=True)
+    name = fields.Char('Operation Types Name', required=True, translate=True)
     color = fields.Integer('Color')
     sequence = fields.Integer('Sequence', help="Used to order the 'All Operations' kanban view")
     sequence_id = fields.Many2one('ir.sequence', 'Reference Sequence', required=True)
     default_location_src_id = fields.Many2one(
         'stock.location', 'Default Source Location',
-        help="This is the default source location when you create a picking manually with this picking type. It is possible however to change it or that the routes put another location. If it is empty, it will check for the supplier location on the partner. ")
+        help="This is the default source location when you create a picking manually with this operation type. It is possible however to change it or that the routes put another location. If it is empty, it will check for the supplier location on the partner. ")
     default_location_dest_id = fields.Many2one(
         'stock.location', 'Default Destination Location',
-        help="This is the default destination location when you create a picking manually with this picking type. It is possible however to change it or that the routes put another location. If it is empty, it will check for the customer location on the partner. ")
+        help="This is the default destination location when you create a picking manually with this operation type. It is possible however to change it or that the routes put another location. If it is empty, it will check for the customer location on the partner. ")
     code = fields.Selection([('incoming', 'Vendors'), ('outgoing', 'Customers'), ('internal', 'Internal')], 'Type of Operation', required=True)
-    return_picking_type_id = fields.Many2one('stock.picking.type', 'Picking Type for Returns')
+    return_picking_type_id = fields.Many2one('stock.picking.type', 'Operation Type for Returns')
     show_entire_packs = fields.Boolean('Allow moving packs', help="If checked, this shows the packs to be moved as a whole in the Operations tab all the time, even if there was no entire pack reserved.")
     warehouse_id = fields.Many2one(
         'stock.warehouse', 'Warehouse', ondelete='cascade',
@@ -39,7 +39,7 @@ class PickingType(models.Model):
         help="If this is checked only, it will suppose you want to create new Lots/Serial Numbers, so you can provide them in a text field. ")
     use_existing_lots = fields.Boolean(
         'Use Existing Lots/Serial Numbers', default=True,
-        help="If this is checked, you will be able to choose the Lots/Serial Numbers. You can also decide to not put lots in this picking type.  This means it will create stock with no lot or not put a restriction on the lot taken. ")
+        help="If this is checked, you will be able to choose the Lots/Serial Numbers. You can also decide to not put lots in this operation type.  This means it will create stock with no lot or not put a restriction on the lot taken. ")
 
     # Statistics for the kanban view
     last_done_picking = fields.Char('Last 10 Done Pickings', compute='_compute_last_done_picking')
@@ -108,6 +108,15 @@ class PickingType(models.Model):
             res.append((picking_type.id, name))
         return res
 
+    @api.model
+    def name_search(self, name, args=None, operator='ilike', limit=100):
+        args = args or []
+        domain = []
+        if name:
+            domain = ['|', ('name', operator, name), ('warehouse_id.name', operator, name)]
+        picks = self.search(domain + args, limit=limit)
+        return picks.name_get()
+
     @api.onchange('code')
     def onchange_picking_code(self):
         if self.code == 'incoming':
@@ -148,7 +157,7 @@ class PickingType(models.Model):
 
 class Picking(models.Model):
     _name = "stock.picking"
-    _inherit = ['mail.thread']
+    _inherit = ['mail.thread', 'mail.activity.mixin']
     _description = "Transfer"
     _order = "priority desc, date asc, id desc"
 
@@ -169,7 +178,7 @@ class Picking(models.Model):
         help="If this shipment was split, then this field links to the shipment which contains the already processed part.")
 
     move_type = fields.Selection([
-        ('direct', 'Partial'), ('one', 'All at once')], 'Delivery Type',
+        ('direct', 'Partial'), ('one', 'All at once')], 'Shipping Policy',
         default='direct', required=True,
         states={'done': [('readonly', True)], 'cancel': [('readonly', True)]},
         help="It specifies goods to be deliver partially or all at once")
@@ -227,8 +236,10 @@ class Picking(models.Model):
         readonly=True, required=True,
         states={'draft': [('readonly', False)]})
     move_lines = fields.One2many('stock.move', 'picking_id', string="Stock Moves", copy=True)
+    has_scrap_move = fields.Boolean(
+        'Has Scrap Moves', compute='_has_scrap_move')
     picking_type_id = fields.Many2one(
-        'stock.picking.type', 'Picking Type',
+        'stock.picking.type', 'Operation Type',
         required=True,
         states={'done': [('readonly', True)], 'cancel': [('readonly', True)]})
     picking_type_code = fields.Selection([
@@ -305,22 +316,18 @@ class Picking(models.Model):
             self.state = 'cancel'
         elif all(move.state in ['cancel', 'done'] for move in self.move_lines):
             self.state = 'done'
-        elif self.move_type == 'one':
-            ordered_moves = self.move_lines.filtered(
-                lambda move: move.state not in ['cancel', 'done']
-            ).sorted(
-                key=lambda move: (move.state == 'assigned' and 2) or (move.state == 'waiting' and 1) or 0, reverse=False
-            )
-            self.state = ordered_moves[0].state
         else:
-            filtered_moves = self.move_lines.filtered(lambda move: move.state not in ['cancel', 'done'])
-            if not all(move.state == 'assigned' for move in filtered_moves) and any(move.state == 'assigned' for move in filtered_moves):
-                self.state = 'partially_available'
-            elif any(move.partially_available for move in filtered_moves):
+            # We sort our moves by importance of state: "confirmed" should be first, then we'll have
+            # "waiting" and finally "assigned" at the end.
+            moves_todo = self.move_lines\
+                .filtered(lambda move: move.state not in ['cancel', 'done'])\
+                .sorted(key=lambda move: (move.state == 'assigned' and 2) or (move.state == 'waiting' and 1) or 0)
+            if self.move_type == 'one':
+                self.state = moves_todo[0].state
+            elif moves_todo[0].state != 'assigned' and any(x.partially_available or x.state == 'assigned' for x in moves_todo):
                 self.state = 'partially_available'
             else:
-                ordered_moves = filtered_moves.sorted(key=lambda move: (move.state == 'assigned' and 2) or (move.state == 'waiting' and 1) or 0, reverse=True)
-                self.state = ordered_moves[0].state
+                self.state = moves_todo[-1].state
 
     @api.one
     @api.depends('move_lines.priority')
@@ -340,6 +347,11 @@ class Picking(models.Model):
     @api.one
     def _set_min_date(self):
         self.move_lines.write({'date_expected': self.min_date})
+
+    @api.one
+    def _has_scrap_move(self):
+        # TDE FIXME: better implementation
+        self.has_scrap_move = bool(self.env['stock.move'].search_count([('picking_id', '=', self.id), ('scrapped', '=', True)]))
 
     @api.one
     def _compute_quant_reserved_exist(self):
@@ -365,7 +377,7 @@ class Picking(models.Model):
             elif self.partner_id:
                 location_dest_id = self.partner_id.property_stock_customer.id
             else:
-                customerloc, location_dest_id = self.env['stock.warehouse']._get_partner_locations()
+                location_dest_id, supplierloc = self.env['stock.warehouse']._get_partner_locations()
 
             self.location_id = location_id
             self.location_dest_id = location_dest_id
@@ -373,7 +385,7 @@ class Picking(models.Model):
         if self.partner_id:
             if self.partner_id.picking_warn == 'no-message' and self.partner_id.parent_id:
                 partner = self.partner_id.parent_id
-            elif self.partner_id.picking_warn not in ('no-message', 'block') and partner.parent_id.picking_warn == 'block':
+            elif self.partner_id.picking_warn not in ('no-message', 'block') and self.partner_id.parent_id.picking_warn == 'block':
                 partner = self.partner_id.parent_id
             else:
                 partner = self.partner_id
@@ -417,7 +429,8 @@ class Picking(models.Model):
 
     @api.multi
     def unlink(self):
-        self.mapped('move_lines').action_cancel().unlink()
+        self.mapped('move_lines').action_cancel()
+        self.mapped('move_lines').unlink() # Checks if moves are not done
         return super(Picking, self).unlink()
 
     # Actions
@@ -482,11 +495,6 @@ class Picking(models.Model):
         todo_moves.action_done()
         return True
 
-    @api.multi
-    def recheck_availability(self):
-        self.action_assign()
-        self.do_prepare_partial()
-
     def _prepare_pack_ops(self, quants, forced_qties):
         """ Prepare pack_operations, returns a list of dict to give at create """
         # TDE CLEANME: oh dear ...
@@ -549,7 +557,7 @@ class Picking(models.Model):
             uom = product_to_uom[mapping.product.id]
             val_dict = {
                 'picking_id': self.id,
-                'product_qty': Uom._compute_qty_obj(mapping.product.uom_id, qty, uom),
+                'product_qty': mapping.product.uom_id._compute_quantity(qty, uom),
                 'product_id': mapping.product.id,
                 'package_id': mapping.package.id,
                 'owner_id': mapping.owner.id,
@@ -585,7 +593,10 @@ class Picking(models.Model):
                     continue
                 move_quants = move.reserved_quant_ids
                 picking_quants += move_quants
-                forced_qty = (move.state == 'assigned') and move.product_qty - sum([x.qty for x in move_quants]) or 0
+                forced_qty = 0.0
+                if move.state == 'assigned':
+                    qty = move.product_uom._compute_quantity(move.product_uom_qty, move.product_id.uom_id, round=False)
+                    forced_qty = qty - sum([x.qty for x in move_quants])
                 # if we used force_assign() on the move, or if the move is incoming, forced_qty > 0
                 if float_compare(forced_qty, 0, precision_rounding=move.product_id.uom_id.rounding) > 0:
                     if forced_qties.get(move.product_id):
@@ -678,7 +689,7 @@ class Picking(models.Model):
         for ops in operations:
             lot_qty = {}
             for packlot in ops.pack_lot_ids:
-                lot_qty[packlot.lot_id.id] = Uom._compute_qty_obj(ops.product_uom_id, packlot.qty, ops.product_id.uom_id)
+                lot_qty[packlot.lot_id.id] = ops.product_uom_id._compute_quantity(packlot.qty, ops.product_id.uom_id)
             # for each operation, create the links with the stock move by seeking on the matching reserved quants,
             # and deffer the operation if there is some ambiguity on the move to select
             if ops.package_id and not ops.product_id and (not done_qtys or ops.qty_done):
@@ -696,7 +707,7 @@ class Picking(models.Model):
             elif ops.product_id.id:
                 # Check moves with same product
                 product_qty = ops.qty_done if done_qtys else ops.product_qty
-                qty_to_assign = Uom._compute_qty_obj(ops.product_uom_id, product_qty, ops.product_id.uom_id)
+                qty_to_assign = ops.product_uom_id._compute_quantity(product_qty, ops.product_id.uom_id)
                 precision_rounding = ops.product_id.uom_id.rounding
                 for move_dict in prod2move_ids.get(ops.product_id.id, []):
                     move = move_dict['move']
@@ -708,7 +719,7 @@ class Picking(models.Model):
 
                         # check if the quant is matching the operation details
                         if ops.package_id:
-                            flag = quant.package_id and bool(QuantPackage.search([('id', 'child_of', [ops.package_id.id])])) or False
+                            flag = quant.package_id == ops.package_id
                         else:
                             flag = not quant.package_id.id
                         flag = flag and (ops.owner_id.id == quant.owner_id.id)
@@ -758,6 +769,8 @@ class Picking(models.Model):
             self.action_assign()
         else:
             moves = self.env['stock.move'].browse(move_ids)
+            if self.env.context.get('no_state_change'):
+                moves = moves.filtered(lambda m: m.reserved_quant_ids)
             moves.do_unreserve()
             moves.action_assign(no_prepare=True)
 
@@ -846,6 +859,13 @@ class Picking(models.Model):
             if not all_op_processed:
                 todo_moves |= picking._create_extra_moves()
 
+            if need_rereserve or not all_op_processed:
+                moves_reassign = any(x.origin_returned_move_id or x.move_orig_ids for x in picking.move_lines if x.state not in ['done', 'cancel'])
+                if moves_reassign and picking.location_id.usage not in ("supplier", "production", "inventory"):
+                    # unnecessary to assign other quants than those involved with pack operations as they will be unreserved anyways.
+                    picking.with_context(reserve_only_ops=True, no_state_change=True).rereserve_quants(move_ids=picking.move_lines.ids)
+                picking.do_recompute_remaining_quantities()
+
             # split move lines if needed
             for move in picking.move_lines:
                 rounding = move.product_id.uom_id.rounding
@@ -866,14 +886,9 @@ class Picking(models.Model):
                     # Assign move as it was assigned before
                     toassign_moves |= new_move
 
-            if need_rereserve or not all_op_processed:
-                if picking.location_id.usage not in ("supplier", "production", "inventory"):
-                    picking.rereserve_quants(move_ids=todo_moves.ids)
-                picking.do_recompute_remaining_quantities()
-
             # TDE FIXME: do_only_split does not seem used anymore
             if todo_moves and not self.env.context.get('do_only_split'):
-                todo_moves.with_context(mail_notrack=True).action_done()
+                todo_moves.action_done()
             elif self.env.context.get('do_only_split'):
                 picking = picking.with_context(split=todo_moves.ids)
 
@@ -903,9 +918,10 @@ class Picking(models.Model):
                     vals = self._prepare_values_extra_move(pack_operation, product, remaining_qty)
                     moves |= moves.create(vals)
         if moves:
-            moves.action_confirm()
+            moves.with_context(skip_check=True).action_confirm()
         return moves
 
+    @api.model
     def _prepare_values_extra_move(self, op, product, remaining_qty):
         """
         Creates an extra move when there is no corresponding original move to be copied
@@ -917,7 +933,7 @@ class Picking(models.Model):
             if op.product_uom_id.factor > product.uom_id.factor:  # If the pack operation's is a smaller unit
                 uom_id = op.product_uom_id.id
                 # HALF-UP rounding as only rounding errors will be because of propagation of error from default UoM
-                qty = Uom._compute_qty_obj(product.uom_id, remaining_qty, op.product_uom_id, rounding_method='HALF-UP')
+                qty = product.uom_id._compute_quantity(remaining_qty, op.product_uom_id, rounding_method='HALF-UP')
         picking = op.picking_id
         ref = product.default_code
         name = '[' + ref + ']' + ' ' + product.name if ref else product.name
@@ -936,7 +952,7 @@ class Picking(models.Model):
             'product_uom_qty': qty,
             'name': _('Extra Move: ') + name,
             'state': 'draft',
-            'restrict_partner_id': op.owner_id,
+            'restrict_partner_id': op.owner_id.id,
             'group_id': picking.group_id.id,
         }
 
@@ -945,6 +961,7 @@ class Picking(models.Model):
         """ Move all non-done lines into a new backorder picking. If the key 'do_only_split' is given in the context, then move all lines not in context.get('split', []) instead of all non-done lines.
         """
         # TDE note: o2o conversion, todo multi
+        backorders = self.env['stock.picking']
         for picking in self:
             backorder_moves = backorder_moves or picking.move_lines
             if self._context.get('do_only_split'):
@@ -965,10 +982,11 @@ class Picking(models.Model):
                 picking.write({'date_done': time.strftime(DEFAULT_SERVER_DATETIME_FORMAT)})
             backorder_picking.action_confirm()
             backorder_picking.action_assign()
-        return True
+            backorders |= backorder_picking
+        return backorders
 
     @api.multi
-    def put_in_pack(self):
+    def _put_in_pack(self):
         # TDE FIXME: reclean me
         QuantPackage = self.env["stock.quant.package"]
         package = False
@@ -986,6 +1004,10 @@ class Picking(models.Model):
                         packlots_transfer = [(4, x.id) for x in operation.pack_lot_ids]
                         new_operation.write({'pack_lot_ids': packlots_transfer})
 
+                        # the stock.pack.operation.lot records now belong to the new, packaged stock.pack.operation
+                        # we have to create new ones with new quantities for our original, unfinished stock.pack.operation
+                        new_operation._copy_remaining_pack_lot_ids(operation)
+
                     op = new_operation
                 pack_operation_ids |= op
             if operations:
@@ -995,3 +1017,30 @@ class Picking(models.Model):
             else:
                 raise UserError(_('Please process some quantities to put in the pack first!'))
         return package
+
+
+    @api.multi
+    def put_in_pack(self):
+        return self._put_in_pack()
+
+    @api.multi
+    def button_scrap(self):
+        self.ensure_one()
+        return {
+            'name': _('Scrap'),
+            'view_type': 'form',
+            'view_mode': 'form',
+            'res_model': 'stock.scrap',
+            'view_id': self.env.ref('stock.stock_scrap_form_view2').id,
+            'type': 'ir.actions.act_window',
+            'context': {'default_picking_id': self.id, 'product_ids': self.pack_operation_product_ids.mapped('product_id').ids},
+            'target': 'new',
+        }
+
+    @api.multi
+    def action_see_move_scrap(self):
+        self.ensure_one()
+        action = self.env.ref('stock.action_stock_scrap').read()[0]
+        scraps = self.env['stock.scrap'].search([('picking_id', '=', self.id)])
+        action['domain'] = [('id', 'in', scraps.ids)]
+        return action

@@ -72,11 +72,14 @@ var PartnerInviteDialog = Dialog.extend({
         var data = this.$input.select2('data');
         if(data.length >= 1){
             var ChannelModel = new Model('mail.channel');
-            return ChannelModel.call('channel_invite', [], {ids : [this.channel_id], partner_ids: _.pluck(data, 'id')})
+            return ChannelModel.call('channel_invite', [this.channel_id], {partner_ids: _.pluck(data, 'id')})
                 .then(function(){
                     var names = _.escape(_.pluck(data, 'text').join(', '));
                     var notification = _.str.sprintf(_t('You added <b>%s</b> to the conversation.'), names);
                     self.do_notify(_t('New people'), notification);
+                    // Clear the members_deferred to fetch again the partner
+                    // when get_mention_partner_suggestions from the chat_manager is triggered
+                    delete chat_manager.get_channel(self.channel_id).members_deferred;
                 });
         }
     },
@@ -107,14 +110,6 @@ var ChatAction = Widget.extend(ControlPanelMixin, {
             var channel_id = $(event.target).data("channel-id");
             chat_manager.unsubscribe(chat_manager.get_channel(channel_id));
         },
-        "click .o_snackbar_undo": function (event) {
-            event.preventDefault();
-            var channel = this.channel;
-            this.$snackbar.remove();
-            this.clear_needactions_def.then(function (msgs_ids) {
-                chat_manager.undo_mark_as_read(msgs_ids, channel);
-            });
-        },
         "click .o_mail_annoying_notification_bar .fa-close": function () {
             this.$(".o_mail_annoying_notification_bar").slideUp();
         },
@@ -123,8 +118,12 @@ var ChatAction = Widget.extend(ControlPanelMixin, {
             this.$(".o_mail_annoying_notification_bar").slideUp();
             var def = window.Notification.requestPermission();
             if (def) {
-                def.then(function () {
-                    utils.send_notification('Permission granted', 'Odoo has now the permission to send you native notifications on this device.');
+                def.then(function (value) {
+                    if (value === 'denied') {
+                        utils.send_notification(_t('Permission denied'), _t('Odoo will not have the permission to send native notifications on this device.'));
+                    } else {
+                        utils.send_notification(_t('Permission granted'), _t('Odoo has now the permission to send you native notifications on this device.'));
+                    }
                 });
             }
         },
@@ -407,7 +406,6 @@ var ChatAction = Widget.extend(ControlPanelMixin, {
         this.messages_separator_position = undefined; // reset value on channel change
         this.unread_counter = this.channel.unread_counter;
         this.last_seen_message_id = this.channel.last_seen_message_id;
-        this.clear_needactions_def = $.Deferred();
         if (this.$snackbar) {
             this.$snackbar.remove();
         }
@@ -418,21 +416,18 @@ var ChatAction = Widget.extend(ControlPanelMixin, {
         return this.fetch_and_render_thread().then(function () {
             // Mark channel's messages as read and clear needactions
             if (channel.type !== 'static') {
-                // Display snackbar if needactions have been cleared
-                if (channel.needaction_counter > 0) {
-                    self.render_snackbar('mail.chat.UndoSnackbar', {
-                        nb_needactions: channel.needaction_counter,
-                    });
-                }
                 chat_manager.mark_channel_as_seen(channel);
-                self.clear_needactions_def = chat_manager.mark_all_as_read(channel);
             }
 
             // Update control panel
             self.set("title", '#' + channel.name);
+            // Hide 'unsubscribe' button in state channels and DM and channels with group-based subscription
+            self.$buttons
+                .find('.o_mail_chat_button_unsubscribe')
+                .toggle(channel.type !== "dm" && channel.type !== 'static' && ! channel.group_based_subscription);
             // Hide 'invite', 'unsubscribe' and 'settings' buttons in static channels and DM
             self.$buttons
-                .find('.o_mail_chat_button_invite, .o_mail_chat_button_unsubscribe, .o_mail_chat_button_settings')
+                .find('.o_mail_chat_button_invite, .o_mail_chat_button_settings')
                 .toggle(channel.type !== "dm" && channel.type !== 'static');
             self.$buttons
                 .find('.o_mail_chat_button_mark_read')
@@ -491,6 +486,7 @@ var ChatAction = Widget.extend(ControlPanelMixin, {
             display_empty_channel: !messages.length && !this.domain.length,
             display_no_match: !messages.length && this.domain.length,
             display_subject: this.channel.mass_mailing || this.channel.id === "channel_inbox",
+            display_email_icon: false,
             display_reply_icon: true,
         };
     },
@@ -660,6 +656,10 @@ var ChatAction = Widget.extend(ControlPanelMixin, {
             views: [[false, 'form']],
             target: 'current'
         });
+    },
+    destroy: function() {
+        this.$buttons.off().destroy();
+        this._super.apply(this, arguments);
     },
 });
 

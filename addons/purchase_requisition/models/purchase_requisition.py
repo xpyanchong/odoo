@@ -29,7 +29,7 @@ class PurchaseRequisitionType(models.Model):
 class PurchaseRequisition(models.Model):
     _name = "purchase.requisition"
     _description = "Purchase Requisition"
-    _inherit = ['mail.thread', 'ir.needaction_mixin']
+    _inherit = ['mail.thread']
     _order = "id desc"
 
     def _get_picking_in(self):
@@ -59,7 +59,7 @@ class PurchaseRequisition(models.Model):
                               'Status', track_visibility='onchange', required=True,
                               copy=False, default='draft')
     account_analytic_id = fields.Many2one('account.analytic.account', 'Analytic Account')
-    picking_type_id = fields.Many2one('stock.picking.type', 'Picking Type', required=True, default=_get_picking_in)
+    picking_type_id = fields.Many2one('stock.picking.type', 'Operation Type', required=True, default=_get_picking_in)
 
     @api.multi
     @api.depends('purchase_ids')
@@ -107,8 +107,8 @@ class PurchaseRequisitionLine(models.Model):
 
     product_id = fields.Many2one('product.product', string='Product', domain=[('purchase_ok', '=', True)], required=True)
     product_uom_id = fields.Many2one('product.uom', string='Product Unit of Measure')
-    product_qty = fields.Float(string='Quantity', digits_compute=dp.get_precision('Product Unit of Measure'))
-    price_unit = fields.Float(string='Unit Price', digits_compute=dp.get_precision('Product Price'))
+    product_qty = fields.Float(string='Quantity', digits=dp.get_precision('Product Unit of Measure'))
+    price_unit = fields.Float(string='Unit Price', digits=dp.get_precision('Product Price'))
     qty_ordered = fields.Float(compute='_compute_ordered_qty', string='Ordered Quantities')
     requisition_id = fields.Many2one('purchase.requisition', string='Purchase Agreement', ondelete='cascade')
     company_id = fields.Many2one('res.company', related='requisition_id.company_id', string='Company', store=True, readonly=True, default= lambda self: self.env['res.company']._company_default_get('purchase.requisition.line'))
@@ -118,13 +118,12 @@ class PurchaseRequisitionLine(models.Model):
     @api.multi
     @api.depends('requisition_id.purchase_ids.state')
     def _compute_ordered_qty(self):
-        ProductUOM = self.env['product.uom']
         for line in self:
             total = 0.0
             for po in line.requisition_id.purchase_ids.filtered(lambda purchase_order: purchase_order.state in ['purchase', 'done']):
                 for po_line in po.order_line.filtered(lambda order_line: order_line.product_id == line.product_id):
                     if po_line.product_uom != line.product_uom_id:
-                        total += ProductUOM._compute_qty_obj(po_line.product_uom, po_line.product_qty, line.product_uom_id)
+                        total += po_line.product_uom._compute_quantity(po_line.product_qty, line.product_uom_id)
                     else:
                         total += po_line.product_qty
             line.qty_ordered = total
@@ -195,18 +194,15 @@ class PurchaseOrder(models.Model):
                 taxes_ids = line.product_id.supplier_taxes_id.filtered(lambda tax: tax.company_id == requisition.company_id).ids
 
             # Compute quantity and price_unit
-            if requisition.type_id.quantity_copy != 'copy':
-                product_qty = 0
-                price_unit = line.price_unit
-            elif line.product_uom_id != line.product_id.uom_po_id:
-                ProductUOM = self.env['product.uom']
-                product_qty = ProductUOM._compute_qty_obj(
-                    line.product_uom_id, line.product_qty, line.product_id.uom_po_id)
-                price_unit = ProductUOM._compute_price(
-                    line.product_uom_id.id, line.price_unit, to_uom_id=line.product_id.uom_po_id.id)
+            if line.product_uom_id != line.product_id.uom_po_id:
+                product_qty = line.product_uom_id._compute_quantity(line.product_qty, line.product_id.uom_po_id)
+                price_unit = line.product_uom_id._compute_price(line.price_unit, line.product_id.uom_po_id)
             else:
                 product_qty = line.product_qty
                 price_unit = line.price_unit
+
+            if requisition.type_id.quantity_copy != 'copy':
+                product_qty = 0
 
             # Compute price_unit in appropriate currency
             if requisition.company_id.currency_id != currency:
@@ -260,6 +256,24 @@ class PurchaseOrder(models.Model):
                     values={'self': self, 'origin': self.requisition_id, 'edit': True},
                     subtype_id=self.env['ir.model.data'].xmlid_to_res_id('mail.mt_note'))
         return result
+
+
+class PurchaseOrderLine(models.Model):
+    _inherit = "purchase.order.line"
+
+    @api.onchange('product_qty', 'product_uom')
+    def _onchange_quantity(self):
+        res = super(PurchaseOrderLine, self)._onchange_quantity()
+        if self.order_id.requisition_id:
+            for line in self.order_id.requisition_id.line_ids:
+                if line.product_id == self.product_id:
+                    if line.product_uom_id != self.product_uom:
+                        self.price_unit = line.product_uom_id._compute_price(
+                            line.price_unit, self.product_uom)
+                    else:
+                        self.price_unit = line.price_unit
+                    break
+        return res
 
 
 class ProductTemplate(models.Model):

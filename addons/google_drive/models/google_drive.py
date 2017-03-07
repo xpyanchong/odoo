@@ -8,7 +8,7 @@ import werkzeug.urls
 
 from odoo import api, fields, models
 from odoo.exceptions import RedirectWarning, UserError
-from odoo.tools.safe_eval import safe_eval as eval
+from odoo.tools.safe_eval import safe_eval
 from odoo.tools.translate import _
 
 from odoo.addons.google_account.models.google_service import GOOGLE_TOKEN_ENDPOINT, TIMEOUT
@@ -49,8 +49,8 @@ class GoogleDrive(models.Model):
 
     @api.model
     def get_access_token(self, scope=None):
-        Config = self.env['ir.config_parameter']
-        google_drive_refresh_token = Config.sudo().get_param('google_drive_refresh_token')
+        Config = self.env['ir.config_parameter'].sudo()
+        google_drive_refresh_token = Config.get_param('google_drive_refresh_token')
         user_is_admin = self.env['res.users'].browse(self.env.user.id)._is_admin()
         if not google_drive_refresh_token:
             if user_is_admin:
@@ -59,8 +59,8 @@ class GoogleDrive(models.Model):
                 raise RedirectWarning(msg, action_id, _('Go to the configuration panel'))
             else:
                 raise UserError(_("Google Drive is not yet configured. Please contact your administrator."))
-        google_drive_client_id = Config.sudo().get_param('google_drive_client_id')
-        google_drive_client_secret = Config.sudo().get_param('google_drive_client_secret')
+        google_drive_client_id = Config.get_param('google_drive_client_id')
+        google_drive_client_secret = Config.get_param('google_drive_client_secret')
         #For Getting New Access Token With help of old Refresh Token
         data = werkzeug.url_encode({
             'client_id': google_drive_client_id,
@@ -165,8 +165,8 @@ class GoogleDrive(models.Model):
                 if config.filter_id.user_id and config.filter_id.user_id.id != self.env.user.id:
                     #Private
                     continue
-                domain = [('id', 'in', [res_id])] + eval(config.filter_id.domain)
-                additionnal_context = eval(config.filter_id.context)
+                domain = [('id', 'in', [res_id])] + safe_eval(config.filter_id.domain)
+                additionnal_context = safe_eval(config.filter_id.context)
                 google_doc_configs = self.env[config.filter_id.model_id].with_context(**additionnal_context).search(domain)
                 if google_doc_configs:
                     config_values.append({'id': config.id, 'name': config.name})

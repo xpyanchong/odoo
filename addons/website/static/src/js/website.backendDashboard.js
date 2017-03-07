@@ -6,11 +6,13 @@ var ajax = require('web.ajax');
 var ControlPanelMixin = require('web.ControlPanelMixin');
 var core = require('web.core');
 var Dialog = require('web.Dialog');
+var formats = require('web.formats');
 var Model = require('web.Model');
 var session = require('web.session');
-var utils = require('web.utils');
 var web_client = require('web.web_client');
 var Widget = require('web.Widget');
+
+var local_storage = require('web.local_storage');
 
 var _t = core._t;
 var QWeb = core.qweb;
@@ -19,6 +21,9 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
     template: "website.WebsiteDashboardMain",
     events: {
         'click .js_link_analytics_settings': 'on_link_analytics_settings',
+        'click .o_dashboard_action': 'on_dashboard_action',
+        'click .o_dashboard_action_form': 'on_dashboard_action_form',
+        'click .o_dashboard_hide_panel': 'on_dashboard_hide_panel',
     },
 
     init: function(parent, context) {
@@ -27,6 +32,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
         this.date_range = 'week';  // possible values : 'week', 'month', year'
         this.date_from = moment().subtract(1, 'week');
         this.date_to = moment();
+        this.hidden_apps = JSON.parse(local_storage.getItem('website_dashboard_hidden_app_ids') || '[]');
 
         this.dashboards_templates = ['website.dashboard_visits'];
         this.graphs = [];
@@ -60,6 +66,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
             self.data = result;
             self.dashboards_data = result.dashboards;
             self.currency_id = result.currency_id;
+            self.groups = result.groups;
         });
     },
 
@@ -105,7 +112,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
     render_dashboards: function() {
         var self = this;
         _.each(this.dashboards_templates, function(template) {
-            self.$el.append(QWeb.render(template, {widget: self}));
+            self.$('.o_website_dashboard_content').append(QWeb.render(template, {widget: self}));
         });
     },
 
@@ -129,7 +136,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
             chart.xAxis
                 .tickFormat(function(d) { return d3.time.format("%m/%d/%y")(new Date(d)); })
                 .tickValues(_.map(tick_values, function(d) { return self.getDate(d); }))
-                .rotateLabels(-30);
+                .rotateLabels(-45);
 
             chart.yAxis
                 .tickFormat(d3.format('.02f'));
@@ -138,7 +145,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
                 .append("svg");
 
             svg
-                .attr("height", '20em')
+                .attr("height", '24em')
                 .datum(chart_values)
                 .call(chart);
 
@@ -150,13 +157,14 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
     render_graphs: function() {
         var self = this;
         _.each(this.graphs, function(e) {
-            self.render_graph('#o_graph_' + e, self.dashboards_data[e].graph);
+            if (self.groups[e.group]) {
+                self.render_graph('#o_graph_' + e.name, self.dashboards_data[e.name].graph);
+            }
         });
         this.render_graph_analytics(this.dashboards_data.visits.ga_client_id);
     },
 
     render_graph_analytics: function(client_id) {
-
         if (!this.dashboards_data.visits || !this.dashboards_data.visits.ga_client_id) {
           return;
         }
@@ -203,7 +211,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
 
         var self = this;
         $.when(this.fetch_data()).then(function() {
-            self.$el.empty();
+            self.$('.o_website_dashboard_content').empty();
             self.render_dashboards();
             self.render_graphs();
         });
@@ -213,6 +221,49 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
     on_reverse_breadcrumb: function() {
         web_client.do_push_state({});
         this.update_cp();
+    },
+
+    on_dashboard_action: function (ev) {
+        ev.preventDefault();
+        var $action = $(ev.currentTarget);
+        var additional_context = {};
+        if (this.date_range === 'week') {
+            additional_context = {'search_default_week': true}
+        } else if (this.date_range === 'month') {
+            additional_context = {'search_default_month': true}
+        } else if (this.date_range === 'year') {
+            additional_context = {'search_default_year': true}
+        }
+        this.do_action($action.attr('name'), {
+            additional_context: additional_context,
+            on_reverse_breadcrumb: this.on_reverse_breadcrumb
+        });
+    },
+
+    on_dashboard_action_form: function (ev) {
+        ev.preventDefault();
+        var $action = $(ev.currentTarget);
+        this.do_action({
+            name: $action.attr('name'),
+            res_model: $action.data('res_model'),
+            res_id: $action.data('res_id'),
+            views: [[false, 'form']],
+            type: 'ir.actions.act_window',
+        }, {
+            on_reverse_breadcrumb: this.on_reverse_breadcrumb
+        });
+    },
+
+    on_dashboard_hide_panel: function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var $action = $(ev.currentTarget);
+        // update hidden module list
+        this.hidden_apps = JSON.parse(local_storage.getItem('website_dashboard_hidden_app_ids') || '[]');
+        this.hidden_apps.push(JSON.parse($action.data('module_id')));
+        local_storage.setItem('website_dashboard_hidden_app_ids', JSON.stringify(this.hidden_apps));
+        // remove box
+        $action.closest(".o_box_item").remove();
     },
 
     update_cp: function() {
@@ -257,7 +308,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
         // Check if the user is authenticated and has the right to make API calls
         if (!gapi.analytics.auth.getAuthResponse()) {
             this.display_unauthorized_message($analytics_components, 'not_connected');
-        } else if (gapi.analytics.auth.getAuthResponse() && gapi.analytics.auth.getAuthResponse().scope.indexOf('https://www.googleapis.com/auth/analytics ') === -1) {
+        } else if (gapi.analytics.auth.getAuthResponse() && gapi.analytics.auth.getAuthResponse().scope.indexOf('https://www.googleapis.com/auth/analytics') === -1) {
             this.display_unauthorized_message($analytics_components, 'no_right');
         } else {
             this.make_analytics_calls($analytics_components);
@@ -292,7 +343,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
         } else if (this.date_range === 'year') {
             start_date = '365daysAgo';
         }
-        var $analytics_chart_2 = $('<div>').addClass('col-md-6');
+        var $analytics_chart_2 = $('<div>').addClass('col-md-6 col-xs-12');
         var breakdownChart = new gapi.analytics.googleCharts.DataChart({
             query: {
                 'dimensions': 'ga:date',
@@ -312,7 +363,7 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
         $analytics_chart_2.appendTo($analytics_components);
 
         // 5. Chart table
-        var $analytics_chart_1 = $('<div>').addClass('col-md-6');
+        var $analytics_chart_1 = $('<div>').addClass('col-md-6 col-xs-12');
         var mainChart = new gapi.analytics.googleCharts.DataChart({
             query: {
                 'dimensions': 'ga:medium',
@@ -515,24 +566,24 @@ var Dashboard = Widget.extend(ControlPanelMixin, {
             return i % keep_one_of === 0;
         });
     },
-    format_number: function(value, symbol) {
-        value = utils.human_number(value);
-        if (symbol === 'currency') {
+    format_number: function(value, type, digits, symbol) {
+        if (type === 'currency') {
             return this.render_monetary_field(value, this.currency_id);
         } else {
-            return value + (symbol || '');
+            return formats.format_value(value || 0, {type: type, digits: digits}) + ' ' + symbol;
         }
     },
     render_monetary_field: function(value, currency_id) {
         var currency = session.get_currency(currency_id);
+        var formatted_value = formats.format_value(value || 0, {type: "float", digits: currency && currency.digits});
         if (currency) {
             if (currency.position === "after") {
-                value += currency.symbol;
+                formatted_value += currency.symbol;
             } else {
-                value = currency.symbol + value;
+                formatted_value = currency.symbol + formatted_value;
             }
         }
-        return value;
+        return formatted_value;
     },
 
 });

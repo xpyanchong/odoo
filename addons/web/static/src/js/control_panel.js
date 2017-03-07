@@ -67,7 +67,7 @@ var ControlPanel = Widget.extend({
         };
 
         // Prevent the search dropdowns to close when clicking inside them
-        this.$el.on('click.bs.dropdown', '.oe-search-options .dropdown-menu', function (e) {
+        this.$el.on('click.bs.dropdown', '.o_search_options .dropdown-menu', function (e) {
             e.stopPropagation();
         });
 
@@ -75,6 +75,10 @@ var ControlPanel = Widget.extend({
         this._toggle_visibility(false);
 
         return this._super();
+    },
+    destroy: function() {
+        this._clear_breadcrumbs_handlers();
+        return this._super.apply(this, arguments);
     },
     /**
      * @return {Object} the Bus the ControlPanel is listening on
@@ -108,7 +112,9 @@ var ControlPanel = Widget.extend({
 
             // Render the breadcrumbs
             if (status.breadcrumbs) {
-                new_cp_content.$breadcrumbs = this._render_breadcrumbs(status.breadcrumbs);
+                this._clear_breadcrumbs_handlers();
+                this.$breadcrumbs = this._render_breadcrumbs(status.breadcrumbs);
+                new_cp_content.$breadcrumbs = this.$breadcrumbs;
             }
 
             // Detach control_panel old content and attach new elements
@@ -196,7 +202,7 @@ var ControlPanel = Widget.extend({
     _render_breadcrumbs_li: function (bc, index, length) {
         var self = this;
         var is_last = (index === length-1);
-        var li_content = _.escape(bc.title.trim()) || data.noDisplayContent;
+        var li_content = bc.title && _.escape(bc.title.trim()) || data.noDisplayContent;
         var $bc = $('<li>')
             .append(is_last ? li_content : $('<a>').html(li_content))
             .toggleClass('active', is_last);
@@ -206,6 +212,17 @@ var ControlPanel = Widget.extend({
             });
         }
         return $bc;
+    },
+    /**
+     * Private function that removes event handlers attached on the currently
+     * displayed breadcrumbs.
+     */
+    _clear_breadcrumbs_handlers: function () {
+        if (this.$breadcrumbs) {
+            _.each(this.$breadcrumbs, function ($bc) {
+                $bc.off();
+            });
+        }
     },
     /**
      * Private function that updates the SearchView's visibility and extend the

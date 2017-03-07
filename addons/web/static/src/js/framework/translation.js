@@ -17,7 +17,6 @@ var TranslationDataBase = Class.extend(/** @lends instance.TranslationDataBase# 
     },
     set_bundle: function(translation_bundle) {
         var self = this;
-        this.db = {};
         this.multi_lang = translation_bundle.multi_lang
         var modules = _.keys(translation_bundle.modules);
         modules.sort();
@@ -29,9 +28,7 @@ var TranslationDataBase = Class.extend(/** @lends instance.TranslationDataBase# 
         });
         if (translation_bundle.lang_parameters) {
             this.parameters = translation_bundle.lang_parameters;
-            if (typeof(py) !== "undefined") {
-                this.parameters.grouping = py.eval(this.parameters.grouping);
-            }
+            this.parameters.grouping = JSON.parse(this.parameters.grouping);
         }
     },
     add_module_translation: function(mod) {

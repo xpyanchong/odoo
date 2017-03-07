@@ -9,7 +9,11 @@ var utils = require('mail.utils');
 var config = require('web.config');
 var core = require('web.core');
 var form_common = require('web.form_common');
+var framework = require('web.framework');
+var pyeval = require('web.pyeval');
+var Model = require("web.Model");
 var web_utils = require('web.utils');
+var Widget = require('web.Widget');
 
 var _t = core._t;
 var QWeb = core.qweb;
@@ -86,6 +90,10 @@ var ChatterComposer = composer.BasicComposer.extend({
         });
 
         return def;
+    },
+
+    clear_composer_on_send: function() {
+        /* chatter don't clear message on sent but after successful sent */
     },
 
     /**
@@ -277,8 +285,9 @@ var Chatter = form_common.AbstractField.extend({
     template: 'mail.Chatter',
 
     events: {
-        "click .o_chatter_button_new_message": "on_open_composer_new_message",
-        "click .o_chatter_button_log_note": "on_open_composer_log_note",
+        'click .o_chatter_button_new_message': 'on_open_composer_new_message',
+        'click .o_chatter_button_log_note': 'on_open_composer_log_note',
+        'click .o_activity_schedule': 'on_activity_schedule',
     },
 
     init: function () {
@@ -287,6 +296,10 @@ var Chatter = form_common.AbstractField.extend({
         this.res_id = undefined;
         this.context = this.options.context || {};
         this.dp = new web_utils.DropPrevious();
+        // extends display options
+        this.options = _.extend(this.options || {}, {
+            'display_activity_button': this.field_manager.fields.activity_ids
+        });
     },
 
     willStart: function () {
@@ -310,8 +323,14 @@ var Chatter = form_common.AbstractField.extend({
         this.followers = this.field_manager.fields.message_follower_ids;
         if (this.followers) {
             this.$('.o_chatter_topbar').append(this.followers.$el);
-            this.followers.on('redirect', this, this.on_redirect);
+            this.followers.on('redirect', chat_manager, chat_manager.redirect);
             this.followers.on('followers_update', this, this.on_followers_update);
+        }
+
+        // Move the activities widget (if any) inside the chatter
+        this.activities = this.field_manager.fields.activity_ids
+        if (this.activities) {
+            this.$('.o_chatter_topbar').after(this.activities.$el);
         }
 
         this.thread = new ChatThread(this, {
@@ -324,7 +343,7 @@ var Chatter = form_common.AbstractField.extend({
         this.thread.on('toggle_star_status', this, function (message_id) {
             chat_manager.toggle_star_status(message_id);
         });
-        this.thread.on('redirect', this, this.on_redirect);
+        this.thread.on('redirect', chat_manager, chat_manager.redirect);
         this.thread.on('redirect_to_channel', this, this.on_channel_redirect);
 
         this.ready = $.Deferred();
@@ -368,13 +387,13 @@ var Chatter = form_common.AbstractField.extend({
         chat_manager
             .post_message(message, options)
             .then(function () {
-                self.close_composer();
+                self.close_composer(true);
                 if (message.partner_ids.length) {
                     self.refresh_followers(); // refresh followers' list
                 }
             })
             .fail(function () {
-                // todo: display notification
+                self.do_notify(_t('Sending Error'), _t('Your message has not been sent.'));
             });
     },
 
@@ -405,17 +424,6 @@ var Chatter = form_common.AbstractField.extend({
         });
     },
 
-    on_redirect: function (res_model, res_id) {
-        this.do_action({
-            type:'ir.actions.act_window',
-            view_type: 'form',
-            view_mode: 'form',
-            res_model: res_model,
-            views: [[false, 'form']],
-            res_id: res_id,
-        });
-    },
-
     on_followers_update: function (followers) {
         this.mention_suggestions = [];
         var self = this;
@@ -441,7 +449,14 @@ var Chatter = form_common.AbstractField.extend({
     },
 
     load_more_messages: function () {
-        this.fetch_and_render_thread(this.msg_ids, {force_fetch: true});
+        var self = this;
+        var top_msg_id = this.$('.o_thread_message').first().data('messageId');
+        var top_msg_selector = '.o_thread_message[data-message-id="' + top_msg_id + '"]';
+        var offset = -framework.getPosition(document.querySelector(top_msg_selector)).top;
+        this.fetch_and_render_thread(this.msg_ids, {force_fetch: true}).then(function(){
+            offset += framework.getPosition(document.querySelector(top_msg_selector)).top;
+            self.thread.scroll_to({offset: offset});
+        });
     },
 
     /**
@@ -455,10 +470,13 @@ var Chatter = form_common.AbstractField.extend({
 
     _render_value: function () {
         // update context
+        var context = _.extend(this.options.context || {},
+            pyeval.eval('contexts', this.build_context())
+        );
         this.context = _.extend({
             default_res_id: this.view.datarecord.id || false,
             default_model: this.view.model || false,
-        }, this.options.context || {});
+        }, context);
         this.thread_dataset = this.view.dataset;
         this.res_id = this.view.datarecord.id;
         this.record_name = this.view.datarecord.display_name;
@@ -479,6 +497,13 @@ var Chatter = form_common.AbstractField.extend({
             this.followers.read_value();
         }
     },
+
+    on_activity_schedule: function (event) {
+        if (this.activities) {
+            this.activities.on_activity_schedule(event);
+        }
+    },
+
     // composer toggle
     on_open_composer_new_message: function () {
         this.open_composer();
@@ -504,7 +529,7 @@ var Chatter = form_common.AbstractField.extend({
         this.composer.on('input_focused', this, function () {
             this.composer.mention_set_prefetched_partners(this.mention_suggestions || []);
         });
-        this.composer.insertBefore(this.$('.o_mail_thread')).then(function () {
+        this.composer.insertAfter(this.$('.o_chatter_topbar')).then(function () {
             // destroy existing composer
             if (old_composer) {
                 old_composer.destroy();
@@ -521,7 +546,7 @@ var Chatter = form_common.AbstractField.extend({
     close_composer: function (force) {
         if (this.composer && (this.composer.is_empty() || force)) {
             this.composer.do_hide();
-            this.composer.$input.val('');
+            this.composer.clear_composer();
             this.mute_new_message_button(false);
         }
     },

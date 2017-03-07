@@ -51,7 +51,7 @@ var Dashboard = Widget.extend({
     },
 
     load_share: function(data){
-        return new DashboardShare(this, {}).replace(this.$('.o_web_settings_dashboard_share'));
+        return new DashboardShare(this, data.share).replace(this.$('.o_web_settings_dashboard_share'));
     },
 
     load_invitations: function(data){
@@ -82,7 +82,7 @@ var DashboardInvitations = Widget.extend({
         var user_emails =  _.filter($(e.delegateTarget).find('#user_emails').val().split(/[\n, ]/), function(email){
             return email !== "";
         });
-        var re = /^([\w-]+(?:\.[\w-]+)*)@((?:[\w-]+\.)*\w[\w-]{0,66})\.([a-z]{2,6}(?:\.[a-z]{2})?)$/i;
+        var re = /^([\w-]+(?:\.[\w-]+)*)@((?:[\w-]+\.)*\w[\w-]{0,66})\.([a-z]{2,63}(?:\.[a-z]{2})?)$/i;
         var is_valid_emails = _.every(user_emails, function(email) {
             return re.test(email);
         });
@@ -155,7 +155,7 @@ var DashboardPlanner = Widget.extend({
     template: 'DashboardPlanner',
 
     events: {
-        'click .o_web_settings_dashboard_progress_title,.progress': 'on_planner_clicked',
+        'click .o_web_settings_dashboard_planner_progress_bar': 'on_planner_clicked',
     },
 
     init: function(parent, data){
@@ -165,7 +165,7 @@ var DashboardPlanner = Widget.extend({
         this._super.apply(this, arguments);
     },
 
-    willStart:function(){
+    willStart: function () {
         var self = this;
         return new Model('web.planner').query().all().then(function(res) {
             self.planners = res;
@@ -196,36 +196,20 @@ var DashboardPlanner = Widget.extend({
 
     sort_planners_list: function(){
         // sort planners alphabetically but with fully completed planners at the end:
-        this.planners = _.sortBy(this.planners, function(planner){return (planner.progress == 100) + planner.name;});
+        this.planners = _.sortBy(this.planners, function(planner){return (planner.progress >= 100) + planner.name;});
     },
 
-    on_planner_clicked: function(e){
-
+    on_planner_clicked: function (e) {
         var menu_id = $(e.currentTarget).attr('data-menu-id');
-        // Setup the planner if we didn't do it yet
-        if (this.planner && this.planner.menu_id[0] == menu_id) {
-            this.dialog.$el.modal('show');
-        }
-        else {
-            this.setup_planner(menu_id);
-        }
-    },
+        this.planner = this.planner_by_menu[menu_id];
 
-    setup_planner: function(menu_id){
-        var self = this;
-        this.planner = self.planner_by_menu[menu_id];
-        if (this.dialog) {
-            this.dialog.destroy();
-        }
-        this.dialog = new PlannerDialog(this, this.planner);
+        this.dialog = new PlannerDialog(this, undefined, this.planner);
         this.dialog.on("planner_progress_changed", this, function(percent) {
-            self.planner.progress = percent;
-            self.update_planner_progress();
+            this.planner.progress = percent;
+            this.update_planner_progress();
         });
-        this.dialog.appendTo(webclient.$el).then(function() {
-            self.dialog.$el.modal('show');
-        });
-    }
+        this.dialog.open();
+    },
 });
 
 var DashboardApps = Widget.extend({
@@ -245,7 +229,7 @@ var DashboardApps = Widget.extend({
 
     start: function() {
         this._super.apply(this, arguments);
-        if (odoo.db_info && odoo.db_info.server_version_info[5] === 'c') {
+        if (odoo.db_info && _.last(odoo.db_info.server_version_info) !== 'e') {
             $(QWeb.render("DashboardEnterprise")).appendTo(this.$el);
         }
     },

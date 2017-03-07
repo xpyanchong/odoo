@@ -29,7 +29,7 @@ CalendarView.include({
     get_all_filters_ordered: function() {
         var filters = this._super();
         if (this.useContacts) {
-            var filter_me = _.first(_.values(this.all_filters));
+            var filter_me = this.all_filters[this.session.partner_id];
             var filter_all = this.all_filters[-1];
             filters = [].concat(filter_me, _.difference(filters, [filter_me, filter_all]), filter_all);
         }
@@ -71,13 +71,19 @@ widgets.SidebarFilter.include({
                 class: 'o_add_favorite_calendar',
                 name: "partner_id",
                 type: "many2one",
-                options: '{"no_open": True}',
+                options: '{"no_open": True, "no_create": True}',
                 placeholder: _t("Add Favorite Calendar"),
             },
         });
         this.m2o.set_filter_ids(_.pluck(this.view.all_filters, 'value'));
         this.m2o.appendTo(this.$el);
-        this.m2o.on('change:value', this, this.on_add_filter.bind(this));
+        var self = this;
+        this.m2o.on('change:value', this, function() {
+            // once selected, we reset the value to false.
+            if (self.m2o.get_value()) {
+                self.on_add_filter();
+            }
+        });
     },
     load_favorite_list: function () {
         var self = this;

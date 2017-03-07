@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
-from openerp.exceptions import UserError, AccessError
+
+from odoo.exceptions import UserError, AccessError
 
 from test_sale_common import TestSale
 
 
 class TestSaleOrder(TestSale):
     def test_sale_order(self):
-        """ Test the sale order flow (invoicing and quantity updates)
+        """ Test the sales order flow (invoicing and quantity updates)
             - Invoice repeatedly while varrying delivered quantities and check that invoice are always what we expect
         """
         # DBO TODO: validate invoice and register payments
@@ -65,7 +66,7 @@ class TestSaleOrder(TestSale):
         self.assertTrue(so.invoice_status == 'invoiced', 'Sale: SO status after invoicing everything (including the upsel) should be "invoiced"')
 
     def test_unlink_cancel(self):
-        """ Test deleting and cancelling sale orders depending on their state and on the user's rights """
+        """ Test deleting and cancelling sales orders depending on their state and on the user's rights """
         so = self.env['sale.order'].create({
             'partner_id': self.partner.id,
             'partner_invoice_id': self.partner.id,
@@ -129,7 +130,7 @@ class TestSaleOrder(TestSale):
             'currency_id': company.currency_id.id,
         }
         inv = self.env['account.invoice'].create(invoice_vals)
-        inv.signal_workflow('invoice_open')
+        inv.action_invoice_open()
         sol = so.order_line.filtered(lambda l: l.product_id == serv_cost)
         self.assertTrue(sol, 'Sale: cost invoicing does not add lines when confirming vendor invoice')
         self.assertTrue(sol.price_unit == 160 and sol.qty_delivered == 2 and sol.product_uom_qty == sol.qty_invoiced == 0, 'Sale: line is wrong after confirming vendor invoice')

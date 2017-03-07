@@ -267,7 +267,7 @@ var ListView = View.extend({
     render_buttons: function($node) {
         if (!this.$buttons) {
             this.$buttons = $(QWeb.render("ListView.buttons", {'widget': this}));
-            this.$buttons.find('.o_list_button_add').click(this.proxy('do_add_record'));
+            this.$buttons.on('click', '.o_list_button_add', this.proxy('do_add_record'));
             this.$buttons.appendTo($node);
         }
     },
@@ -287,7 +287,7 @@ var ListView = View.extend({
             this.sidebar.add_items('other', _.compact([
                 { label: _t("Export"), callback: this.on_sidebar_export },
                 this.fields_view.fields.active && {label: _t("Archive"), callback: this.do_archive_selected},
-                this.fields_view.fields.active && {label: _t("Unarchive"), callback: this.do_unarchive_selected},
+                this.fields_view.fields.active && {label: _t("Restore"), callback: this.do_unarchive_selected},
                 this.is_action_enabled('delete') && { label: _t('Delete'), callback: this.do_delete_selected }
             ]));
 
@@ -470,11 +470,12 @@ var ListView = View.extend({
                 self.records.remove(record);
                 return;
             }
-            _.each(values, function (value, key) {
+            // _.each is broken if a field "length" is present
+            for (var key in values) {
                 if (fields[key] && fields[key].type === 'many2many')
                     record.set(key + '__display', false, {silent: true});
-                record.set(key, value, {silent: true});            
-            });
+                record.set(key, values[key], {silent: true});
+            }
             record.trigger('change', record);
 
             /* When a record is reloaded, there is a rendering lag because of the addition/suppression of 
@@ -553,8 +554,11 @@ var ListView = View.extend({
             if (self.display_nocontent_helper()) {
                 self.no_result();
             } else {
-                // Load previous page if the current one is empty
-                if (self.records.length === 0 && self.dataset.size() > 0) {
+                if (self.records.length && self.current_min === 1) {
+                    // Reload the list view if we delete all the records of the first page
+                    self.reload();
+                } else if (self.records.length && self.dataset.size() > 0) {
+                    // Load previous page if the current one is empty
                     self.pager.previous();
                 }
                 // Reload the list view if we are not on the last page
@@ -758,7 +762,16 @@ var ListView = View.extend({
         });
 
         var aggregates = {};
-        _(columns).each(function (column) {
+        _.each(_.filter(columns, function (column) {
+            if (column.currency_field && records.length > 0 && records[0].values['currency_id']) {
+                var currency_ids = _.map(records, function(record) {return record.values['currency_id'][0]});
+                if (_.every(currency_ids, function (currency_id){return currency_id === currency_ids[0]})) {
+                    return column;
+                }
+            } else {
+                return column;
+            }
+        }), function (column) {
             var field = column.id;
             switch (column['function']) {
                 case 'avg':
@@ -1092,12 +1105,12 @@ ListView.List = Class.extend({
                                    _(names).pluck(1).join(', '));
                         record.set(column.id, ids);
                     });
-                // temp empty value
-                record.set(column.id, false);
+                // temporary empty display name
+                record.set(column.id + '__display', false);
             }
         }
         return column.format(record.toForm().data, {
-            model: this.model,
+            model: this.dataset.model,
             id: record.get('id')
         });
     },
@@ -1386,7 +1399,7 @@ ListView.Groups = Class.extend({
                 } else {
                     group_label = group.value;
                     var grouped_on_field = self.view.fields_get[group.grouped_on];
-                    if (grouped_on_field.type === 'selection') {
+                    if (grouped_on_field && grouped_on_field.type === 'selection') {
                         group_label = _.find(grouped_on_field.selection, function(selection) {
                             return selection[0] === group.value;
                         });
@@ -1402,7 +1415,7 @@ ListView.Groups = Class.extend({
                     
                 // group_label is html-clean (through format or explicit
                 // escaping if format failed), can inject straight into HTML
-                $group_column.html(_.str.sprintf(_t("%s (%d)"),
+                $group_column.html(_.str.sprintf("%s (%d)",
                     group_label, group.length));
 
                 if (group.length && group.openable) {
@@ -1489,20 +1502,16 @@ ListView.Groups = Class.extend({
         });
     },
     setup_resequence_rows: function (list, dataset) {
+        var sequence_field = _(this.columns).findWhere({'widget': 'handle'});
+        var seqname = sequence_field ? sequence_field.name : 'sequence';
+
         // drag and drop enabled if list is not sorted (unless it is sorted by
-        // sequence (ASC)), and there is a visible column with @widget=handle
-        // or "sequence" column in the view.
-        if ((dataset.sort && dataset.sort() && dataset.sort() !== 'sequence'
-            && dataset.sort() !== 'sequence ASC')
-            || !_(this.columns).any(function (column) {
-                    return column.widget === 'handle'
-                        || column.name === 'sequence'; })) {
+        // its sequence field (ASC)), and there is a visible column with
+        // @widget=handle or "sequence" column in the view.
+        if ((dataset.sort && [seqname, seqname + ' ASC', ''].indexOf(dataset.sort()) === -1)
+            || !_(this.columns).findWhere({'name': seqname})) {
             return;
         }
-        var sequence_field = _(this.columns).find(function (c) {
-            return c.widget === 'handle';
-        });
-        var seqname = sequence_field ? sequence_field.name : 'sequence';
 
         // ondrop, move relevant record & fix sequences
         list.$current.sortable({
@@ -1705,7 +1714,6 @@ var Column = Class.extend({
             id: id,
             tag: tag
         });
-
         this.modifiers = attrs.modifiers ? JSON.parse(attrs.modifiers) : {};
         delete attrs.modifiers;
         _.extend(this, attrs);
@@ -1732,10 +1740,14 @@ var Column = Class.extend({
         if (this.type !== 'integer' && this.type !== 'float' && this.type !== 'monetary') {
             return {};
         }
-        var aggregation_func = this['group_operator'] || 'sum';
-        if (!(aggregation_func in this)) {
+
+        var aggregation_func = (this.sum && 'sum') || (this.avg && 'avg') ||
+                               (this.max && 'max') || (this.min && 'min');
+
+        if (!aggregation_func) {
             return {};
         }
+
         var C = function (fn, label) {
             this['function'] = fn;
             this.label = label;
@@ -2010,7 +2022,7 @@ var ColumnToggleButton = Column.extend({
         var fieldname = this.field_name;
         var has_value = row_data[fieldname] && !!row_data[fieldname].value;
         this.icon = has_value ? 'fa-circle o_toggle_button_success' : 'fa-circle text-muted';
-        this.string = has_value ? _t(button_tips ? button_tips['active']: ''): _t(button_tips ? button_tips['inactive']: '');
+        this.string = has_value ? (button_tips ? button_tips['active']: ''): (button_tips ? button_tips['inactive']: '');
         return QWeb.render('toggle_button', {
             widget: this,
             prefix: session.prefix,

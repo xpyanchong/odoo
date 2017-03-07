@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# Part of Odoo. See LICENSE file for full copyright and licensing details.
+
 import datetime
 import random
 import re
@@ -8,10 +10,10 @@ from lxml import html
 from urllib2 import urlopen
 from urlparse import urljoin
 from urlparse import urlparse
-from werkzeug import url_encode
+from werkzeug import url_encode, unescape
 
-from openerp import models, fields, api, _
-from openerp.tools import ustr
+from odoo import models, fields, api, _
+from odoo.tools import ustr
 
 URL_REGEX = r'(\bhref=[\'"](?!mailto:)([^\'"]+)[\'"])'
 
@@ -49,12 +51,12 @@ class link_tracker(models.Model):
     def convert_links(self, html, vals, blacklist=None):
         for match in re.findall(URL_REGEX, html):
 
-            short_schema = self.env['ir.config_parameter'].get_param('web.base.url') + '/r/'
+            short_schema = self.env['ir.config_parameter'].sudo().get_param('web.base.url') + '/r/'
 
             href = match[0]
             long_url = match[1]
 
-            vals['url'] = long_url
+            vals['url'] = unescape(long_url)
 
             if not blacklist or not [s for s in blacklist if s in long_url] and not long_url.startswith(short_schema):
                 link = self.create(vals)
@@ -74,12 +76,12 @@ class link_tracker(models.Model):
     @api.one
     @api.depends('code')
     def _compute_short_url(self):
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         self.short_url = urljoin(base_url, '/r/%(code)s' % {'code': self.code})
 
     @api.one
     def _compute_short_url_host(self):
-        self.short_url_host = self.env['ir.config_parameter'].get_param('web.base.url') + '/r/'
+        self.short_url_host = self.env['ir.config_parameter'].sudo().get_param('web.base.url') + '/r/'
 
     @api.one
     def _compute_code(self):

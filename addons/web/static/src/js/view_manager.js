@@ -274,7 +274,8 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
     },
     create_view: function(view, view_options) {
         var self = this;
-        var View = this.registry.get(view.type);
+        var js_class = view.fields_view.arch.attrs && view.fields_view.arch.attrs.js_class;
+        var View = this.registry.get(js_class || view.type);
         var options = _.clone(view.options);
         if (view.type === "form" && ((this.action.target === 'new' || this.action.target === 'inline') ||
             (view_options && view_options.mode === 'edit'))) {
@@ -458,7 +459,18 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
         }
     },
     do_load_state: function(state, warm) {
+        if (state.view_type && state.view_type !== this.active_view.type) {
+            this.switch_mode(state.view_type, true);
+        }
         this.active_view.controller.do_load_state(state, warm);
+    },
+    destroy: function () {
+        if (this.control_elements) {
+            if (this.control_elements.$switch_buttons) {
+                this.control_elements.$switch_buttons.off();
+            }
+        }
+        return this._super.apply(this, arguments);
     },
 });
 

@@ -1,4 +1,4 @@
-from openerp.addons.account.tests.account_test_classes import AccountingTestCase
+from odoo.addons.account.tests.account_test_classes import AccountingTestCase
 import time
 import unittest
 
@@ -56,13 +56,14 @@ class TestReconciliation(AccountingTestCase):
         })
 
         #validate invoice
-        invoice.signal_workflow('invoice_open')
+        invoice.action_invoice_open()
         return invoice
 
     def make_payment(self, invoice_record, bank_journal, amount=0.0, amount_currency=0.0, currency_id=None):
         bank_stmt = self.acc_bank_stmt_model.create({
             'journal_id': bank_journal.id,
             'date': time.strftime('%Y') + '-07-15',
+            'name': 'payment' + invoice_record.number
         })
 
         bank_stmt_line = self.acc_bank_stmt_line_model.create({'name': 'payment',
@@ -242,7 +243,7 @@ class TestReconciliation(AccountingTestCase):
         self.check_results(bank_stmt.move_line_ids, {
             self.account_euro.id: {'debit': 40.0, 'credit': 0.0, 'amount_currency': 0, 'currency_id': False},
             self.account_rcv.id: {'debit': 0.0, 'credit': 32.7, 'amount_currency': -41.97, 'currency_id': self.currency_usd_id, 'currency_diff': 0, 'amount_currency_diff': -8.03},
-            self.diff_income_account.id: {'debit': 0.0, 'credit': 7.3, 'amount_currency': 0, 'currency_id': False},
+            self.diff_income_account.id: {'debit': 0.0, 'credit': 7.3, 'amount_currency': -9.37, 'currency_id': self.currency_usd_id},
         })
 
         # The invoice should be paid, as the payments totally cover its total
@@ -258,15 +259,15 @@ class TestReconciliation(AccountingTestCase):
         # For instance, with a company set in EUR, and a USD rate set to 0.033,
         # the reconciliation of an invoice of 2.00 USD (60.61 EUR) and a bank statement of two lines of 1.00 USD (30.30 EUR)
         # will lead to an exchange loss, that should be handled correctly within the journal items.
-        cr, uid = self.cr, self.uid
+        env = api.Environment(self.cr, self.uid, {})
         # We update the currency rate of the currency USD in order to force the gain/loss exchanges in next steps
-        rateUSDbis_id = self.registry("ir.model.data").get_object_reference(self.cr, self.uid, "base", "rateUSDbis")[1]
-        self.res_currency_rate_model.write(cr, uid, rateUSDbis_id, {
+        rateUSDbis = env.ref("base.rateUSDbis")
+        rateUSDbis.write({
             'name': time.strftime('%Y-%m-%d') + ' 00:00:00',
             'rate': 0.033,
         })
         # We create a customer invoice of 2.00 USD
-        invoice_id = self.account_invoice_model.create(cr, uid, {
+        invoice = self.account_invoice_model.create({
             'partner_id': self.partner_agrolait_id,
             'currency_id': self.currency_usd_id,
             'name': 'Foreign invoice with exchange gain',
@@ -282,10 +283,9 @@ class TestReconciliation(AccountingTestCase):
                 })
             ]
         })
-        self.registry('account.invoice').signal_workflow(cr, uid, [invoice_id], 'invoice_open')
-        invoice = self.account_invoice_model.browse(cr, uid, invoice_id)
+        invoice.action_invoice_open()
         # We create a bank statement with two lines of 1.00 USD each.
-        bank_stmt_id = self.acc_bank_stmt_model.create(cr, uid, {
+        statement = self.acc_bank_stmt_model.create({
             'journal_id': self.bank_journal_usd_id,
             'date': time.strftime('%Y-%m-%d'),
             'line_ids': [
@@ -304,8 +304,6 @@ class TestReconciliation(AccountingTestCase):
             ]
         })
 
-        statement = self.acc_bank_stmt_model.browse(cr, uid, bank_stmt_id)
-
         # We process the reconciliation of the invoice line with the two bank statement lines
         line_id = None
         for l in invoice.move_id.line_id:
@@ -313,7 +311,7 @@ class TestReconciliation(AccountingTestCase):
                 line_id = l
                 break
         for statement_line in statement.line_ids:
-            self.acc_bank_stmt_line_model.process_reconciliation(cr, uid, statement_line.id, [
+            statement_line.process_reconciliation([
                 {'counterpart_move_line_id': line_id.id, 'credit': 1.0, 'debit': 0.0, 'name': line_id.name}
             ])
 
@@ -404,3 +402,75 @@ class TestReconciliation(AccountingTestCase):
             self.assertTrue(aml.reconciled, 'The journal item should be totally reconciled')
             self.assertEquals(aml.amount_residual, 0, 'The journal item should be totally reconciled')
             self.assertEquals(aml.amount_residual_currency, 0, 'The journal item should be totally reconciled')
+
+    def test_reconcile_bank_statement_with_payment_and_writeoff(self):
+        # Use case:
+        # Company is in EUR, create a bill for 80 USD and register payment of 80 USD.
+        # create a bank statement in USD bank journal with a bank statement line of 85 USD
+        # Reconcile bank statement with payment and put the remaining 5 USD in bank fees or another account.
+
+        invoice = self.create_invoice(type='out_invoice', invoice_amount=80, currency_id=self.currency_usd_id)
+        # register payment on invoice
+        payment = self.env['account.payment'].create({'payment_type': 'inbound',
+            'payment_method_id': self.env.ref('account.account_payment_method_manual_in').id,
+            'partner_type': 'customer',
+            'partner_id': self.partner_agrolait_id,
+            'amount': 80,
+            'currency_id': self.currency_usd_id,
+            'payment_date': time.strftime('%Y') + '-07-15',
+            'journal_id': self.bank_journal_usd.id,
+            })
+        payment.post()
+        payment_move_line = False
+        bank_move_line = False
+        for l in payment.move_line_ids:
+            if l.account_id.id == self.account_rcv.id:
+                payment_move_line = l
+            else:
+                bank_move_line = l
+        invoice.register_payment(payment_move_line)
+
+        # create bank statement
+        bank_stmt = self.acc_bank_stmt_model.create({
+            'journal_id': self.bank_journal_usd.id,
+            'date': time.strftime('%Y') + '-07-15',
+        })
+
+        bank_stmt_line = self.acc_bank_stmt_line_model.create({'name': 'payment',
+            'statement_id': bank_stmt.id,
+            'partner_id': self.partner_agrolait_id,
+            'amount': 85,
+            'date': time.strftime('%Y') + '-07-15',})
+
+        #reconcile the statement with invoice and put remaining in another account
+        bank_stmt_line.process_reconciliation(payment_aml_rec= bank_move_line, new_aml_dicts=[{
+            'account_id': self.diff_income_account.id,
+            'debit': 0,
+            'credit': 5,
+            'name': 'bank fees',
+            }])
+
+        # Check that move lines associated to bank_statement are correct
+        bank_stmt_aml = self.env['account.move.line'].search([('statement_id', '=', bank_stmt.id)])
+        bank_stmt_aml |= bank_stmt_aml.mapped('move_id').mapped('line_ids')
+        self.assertEquals(len(bank_stmt_aml), 4, "The bank statement should have 4 moves lines")
+        lines = {
+            self.account_usd.id: [
+                {'debit': 3.27, 'credit': 0.0, 'amount_currency': 5, 'currency_id': self.currency_usd_id},
+                {'debit': 52.33, 'credit': 0, 'amount_currency': 80, 'currency_id': self.currency_usd_id}
+                ],
+            self.diff_income_account.id: {'debit': 0.0, 'credit': 3.27, 'amount_currency': -5, 'currency_id': self.currency_usd_id},
+            self.account_rcv.id: {'debit': 0.0, 'credit': 52.33, 'amount_currency': -80, 'currency_id': self.currency_usd_id},
+        }
+        for aml in bank_stmt_aml:
+            line = lines[aml.account_id.id]
+            if type(line) == list:
+                # find correct line inside the list
+                if line[0]['debit'] == round(aml.debit, 2):
+                    line = line[0]
+                else:
+                    line = line[1]
+            self.assertEquals(round(aml.debit, 2), line['debit'])
+            self.assertEquals(round(aml.credit, 2), line['credit'])
+            self.assertEquals(round(aml.amount_currency, 2), line['amount_currency'])
+            self.assertEquals(aml.currency_id.id, line['currency_id'])
